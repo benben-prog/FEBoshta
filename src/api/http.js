@@ -18,7 +18,7 @@ function getHeaders(isFormData = false) {
 }
 
 async function httpRequest(path, options = {}) {
-  const url = `${apiUrl}/api/${path}`;
+  const url = `${apiUrl}/api${path}`;
 
   try {
     const response = await fetch(url, {
