@@ -18,8 +18,8 @@ export function renderBarcode(svgEl, code, opts = {}) {
 
 
 export function printBarcodeWindow(student, centerName = "السنتر") {
-  const barcode = student.Barcode || "";
-  const name = student.Name || "";
+  const barcode = student.barcode || "";
+  const name = student.full_name || "";
 
   const w = window.open("", "_blank", "width=420,height=320");
 

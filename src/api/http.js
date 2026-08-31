@@ -9,16 +9,22 @@ function getHeaders(isFormData = false) {
   const token = getCookie("auth_token");
   const superAdminKey = getCookie("super_admin_key");
 
-  return {
+  const headers = {
     Authorization: `Basic ${credential}`,
-    ...(isFormData ? {} : { "Content-Type": "application/json" }),
     ...(token ? { "x-client-key": token } : {}),
     ...(superAdminKey ? { "x-super-admin-key": superAdminKey } : {}),
   };
+
+  // ✅ إزالة Content-Type للـ FormData - المتصفح بيضيفه تلقائياً
+  if (!isFormData) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  return headers;
 }
 
 async function httpRequest(path, options = {}) {
-  const url = `${apiUrl}/api${path}`;
+  const url = `${apiUrl}${path}`;
 
   try {
     const response = await fetch(url, {

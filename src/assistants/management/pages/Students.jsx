@@ -3,11 +3,16 @@ import { motion, AnimatePresence } from "framer-motion";
 import AddStudentDialog from "../components/AddStudentDialog.jsx";
 import StudentCard from "../components/StudentCard.jsx";
 import { memo, useMemo, useState, useEffect } from "react";
+import { useApiQuery, useApiList, useApiMutation, useInvalidate } from "../../../hooks/useApiQuery";
+import { qk } from "../../../api/queryKeys";
+import { notifyError, notifySuccess, confirmToast, toast } from "../../../lib/notify";
 import { SkeletonRows } from "../components/Spinner";
-import { 
-    fetchAllStudents, 
-    createNewStudent, 
-    updateStudentInfo, 
+import { printBarcodeWindow } from "../../../utils/barcode.js"
+import { downloadExcelTemplate, pickExcelFile, exportPdfTable } from "../../../utils/office.js"
+import {
+    fetchAllStudents,
+    createNewStudent,
+    updateStudentInfo,
     removeStudent,
     restoreStudent,
     permanentlyRemoveStudent,
@@ -98,185 +103,139 @@ const StudentRow = memo(function StudentRow({ student, index, onView, onEdit, on
 const Students = () => {
     const [modal, setModal] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
-    const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
-    const [error, setError] = useState(null);
-    const [successMessage, setSuccessMessage] = useState(null);
 
-    const [grades, setGrades] = useState([]);
-    const [groups, setGroups] = useState([]);
-    const [students, setStudents] = useState([]);
     const [student, setStudent] = useState(emptyStudent);
 
     const [viewing, setViewing] = useState(null);
     const [viewingStats, setViewingStats] = useState(null);
 
+    const [searchInput, setSearchInput] = useState("");
     const [search, setSearch] = useState("");
+    const [barcodeTerm, setBarcodeTerm] = useState("");
     const [selectedGrade, setSelectedGrade] = useState("");
     const [selectedGroup, setSelectedGroup] = useState("");
 
     const [page, setPage] = useState(1);
-    const [total, setTotal] = useState(0);
-    const [totalPages, setTotalPages] = useState(1);
+    const [importing, setImporting] = useState(false);
+    const [progress, setProgress] = useState({ done: 0, total: 0 });
 
-    async function loadData() {
-        setLoading(true);
-        setError(null);
-        try {
-            const [studentsResult, gradesResult, groupsResult] = await Promise.all([
-                fetchAllStudents(page, search, selectedGrade, selectedGroup),
-                fetchAllGrades(),
-                fetchAllGroups()
-            ]);
 
-            if (studentsResult.success) {
-                const data = Array.isArray(studentsResult.data) ? studentsResult.data : [];
-                setStudents(data);
-                setTotal(studentsResult.pagination?.total || data.length);
-                setTotalPages(studentsResult.pagination?.totalPages || 1);
-            } else {
-                setError(studentsResult.error || "حدث خطأ في تحميل الطلاب");
-                setStudents([]);
-            }
-
-            if (gradesResult.success) {
-                const data = Array.isArray(gradesResult.data) ? gradesResult.data : [];
-                const activeGrades = data.filter(item => item.name && item.name.trim() !== "");
-                setGrades(activeGrades);
-            }
-
-            if (groupsResult.success) {
-                const data = Array.isArray(groupsResult.data) ? groupsResult.data : [];
-                const activeGroups = data.filter(item => item.deleted === 0 || item.deleted === undefined);
-                setGroups(activeGroups);
-            }
-        } catch (error) {
-            console.error("Error loading data:", error);
-            setError("حدث خطأ في تحميل البيانات");
-            setStudents([]);
-        } finally {
-            setLoading(false);
-        }
-    }
-
+    /* debounce للبحث: مفيش request مع كل حرف */
     useEffect(() => {
-        loadData();
-    }, [page, search, selectedGrade, selectedGroup]);
+        const t = setTimeout(() => {
+            setSearch(searchInput.trim());
+            setPage(1);
+        }, 400);
+        return () => clearTimeout(t);
+    }, [searchInput]);
 
-    async function saveStudent() {
-        setError(null);
-        setSuccessMessage(null);
+    const invalidate = useInvalidate();
 
-        if (!student.full_name || student.full_name.trim() === "") {
-            setError("يرجى إدخال اسم الطالب");
-            return;
+    /* الصفوف والمجموعات بتتحمل مرة واحدة وتتخزن في الكاش لكل الصفحات */
+    const gradesQuery = useApiList(qk.grades.all, fetchAllGrades, {
+        select: (data) => (Array.isArray(data) ? data : []).filter((item) => item?.name && item.name.trim() !== ""),
+        showErrorToast: false,
+    });
+    const groupsQuery = useApiList(qk.groups.all, fetchAllGroups, {
+        select: (data) => (Array.isArray(data) ? data : []).filter((item) => item?.deleted === 0 || item?.deleted === undefined),
+        showErrorToast: false,
+    });
+
+    const studentsQuery = useApiQuery(
+        qk.students.list(page, search, selectedGrade, selectedGroup),
+        () => fetchAllStudents(page, search, selectedGrade, selectedGroup),
+        {
+            fallback: [],
+            select: (data) => (Array.isArray(data) ? data : []),
+            errorMessage: "حدث خطأ في تحميل الطلاب",
+            enabled: !barcodeTerm,
+        },
+    );
+
+    /* بحث بالباركود — query منفصل يشتغل بس لما المستخدم يطلبه */
+    const barcodeQuery = useApiQuery(
+        ["students", "barcode", barcodeTerm],
+        () => searchStudentByBarcode(barcodeTerm),
+        { enabled: !!barcodeTerm, errorMessage: "حدث خطأ في البحث" },
+    );
+
+    const grades = gradesQuery.data ?? [];
+    const groups = groupsQuery.data ?? [];
+
+    const students = useMemo(() => {
+        let data = [];
+        if (barcodeTerm) {
+            const found = barcodeQuery.data;
+            data = found && found.id ? [found] : [];
+        } else {
+            data = studentsQuery.data ?? [];
         }
+        return [...data].sort((a, b) => {
+            const aNum = Number(a?.barcode) || 0;
+            const bNum = Number(b?.barcode) || 0;
+            return aNum - bNum;
+        });
+    }, [barcodeTerm, barcodeQuery.data, studentsQuery.data]);
 
-        if (!student.barcode || student.barcode.trim() === "") {
-            setError("يرجى إدخال الباركود");
-            return;
-        }
+    const tableLoading = barcodeTerm
+        ? barcodeQuery.isLoading || barcodeQuery.isFetching
+        : studentsQuery.isLoading || studentsQuery.isFetching;
+    const refreshing = studentsQuery.isFetching && !studentsQuery.isLoading;
 
-        if (!student.grade_id) {
-            setError("يرجى اختيار المرحلة الدراسية");
-            return;
-        }
+    const total = barcodeTerm ? students.length : (studentsQuery.pagination?.total ?? students.length);
+    const totalPages = barcodeTerm ? 1 : (studentsQuery.pagination?.totalPages ?? 1);
 
-        if (!student.group_id) {
-            setError("يرجى اختيار المجموعة");
-            return;
-        }
+    const refreshStudents = () => invalidate(["students"]);
 
-        try {
-            const studentData = {
-                barcode: student.barcode.trim(),
-                full_name: student.full_name.trim(),
-                phone: student.phone || "",
-                parent_phone: student.parent_phone || "",
-                grade_id: Number(student.grade_id),
-                group_id: Number(student.group_id),
-                notes: student.notes || ""
-            };
-
-            let result;
-            if (isEditing && student.id) {
-                result = await updateStudentInfo(student.id, studentData);
-                if (result.success) {
-                    setSuccessMessage("تم تحديث الطالب بنجاح");
-                }
-            } else {
-                result = await createNewStudent(studentData);
-                if (result.success) {
-                    setSuccessMessage("تم إضافة الطالب بنجاح");
-                }
-            }
-
-            if (!result?.success) {
-                setError(result?.error || "حدث خطأ في حفظ البيانات");
-            } else {
-                await loadData();
+    const saveMutation = useApiMutation(
+        ({ id, payload }) => (id ? updateStudentInfo(id, payload) : createNewStudent(payload)),
+        {
+            invalidateKeys: [["students"], qk.assistant.dashboard],
+            errorMessage: "حدث خطأ في حفظ البيانات",
+            onSuccess: (_data, variables) => {
+                notifySuccess(variables.id ? "تم تحديث الطالب بنجاح" : "تم إضافة الطالب بنجاح");
                 closeDialog();
-            }
-        } catch (error) {
-            console.error("Error saving student:", error);
-            setError(error.message || "حدث خطأ في حفظ البيانات");
-        }
+            },
+        },
+    );
 
-        setTimeout(() => setSuccessMessage(null), 3000);
+    const deleteMutation = useApiMutation((id) => removeStudent(id), {
+        invalidateKeys: [["students"], qk.assistant.dashboard],
+        successMessage: "تم حذف الطالب بنجاح",
+        errorMessage: "حدث خطأ في حذف الطالب",
+    });
+
+    function saveStudent() {
+        if (!student.full_name || student.full_name.trim() === "") return notifyError("يرجى إدخال اسم الطالب");
+        if (!student.barcode || student.barcode.trim() === "") return notifyError("يرجى إدخال الباركود");
+        if (!student.grade_id) return notifyError("يرجى اختيار المرحلة الدراسية");
+        if (!student.group_id) return notifyError("يرجى اختيار المجموعة");
+
+        const payload = {
+            barcode: student.barcode.trim(),
+            full_name: student.full_name.trim(),
+            phone: student.phone || "",
+            parent_phone: student.parent_phone || "",
+            grade_id: Number(student.grade_id),
+            group_id: Number(student.group_id),
+            notes: student.notes || "",
+        };
+
+        saveMutation.mutate({ id: isEditing && student.id ? student.id : null, payload });
     }
 
-    async function removeStudentById(id) {
+    function removeStudentById(id) {
         if (!id) return;
-        
-        if (!confirm("هل أنت متأكد من حذف هذا الطالب؟")) return;
-        
-        setError(null);
-        setSuccessMessage(null);
-        
-        try {
-            const result = await removeStudent(id);
-            if (result.success) {
-                setSuccessMessage("تم حذف الطالب بنجاح");
-                await loadData();
-                setTimeout(() => setSuccessMessage(null), 3000);
-            } else {
-                setError(result.error || "حدث خطأ في حذف الطالب");
-            }
-        } catch (error) {
-            console.error("Error deleting student:", error);
-            setError("حدث خطأ في حذف الطالب");
-        }
+        confirmToast("هل أنت متأكد من حذف هذا الطالب؟", () => deleteMutation.mutate(id), "حذف");
     }
 
-    async function searchByBarcode() {
-        if (!search.trim()) {
-            await loadData();
+    function searchByBarcode() {
+        const term = searchInput.trim();
+        if (!term) {
+            setBarcodeTerm("");
             return;
         }
-
-        setLoading(true);
-        try {
-            const result = await searchStudentByBarcode(search.trim());
-            if (result.success) {
-                const found = result.data;
-                if (found && found.id) {
-                    setStudents([found]);
-                    setTotal(1);
-                    setTotalPages(1);
-                } else {
-                    setStudents([]);
-                    setTotal(0);
-                    setError("لم يتم العثور على طالب بهذا الباركود");
-                }
-            } else {
-                setError(result.error || "حدث خطأ في البحث");
-            }
-        } catch (error) {
-            console.error("Error searching:", error);
-            setError("حدث خطأ في البحث");
-        } finally {
-            setLoading(false);
-        }
+        setBarcodeTerm(term);
     }
 
     async function viewStudent(studentData) {
@@ -293,6 +252,7 @@ const Students = () => {
             setViewingStats(stats);
         } catch (error) {
             console.error("Error viewing student:", error);
+            notifyError(error, "تعذر تحميل بيانات الطالب");
             setViewing(studentData);
             setViewingStats(null);
         }
@@ -323,16 +283,16 @@ const Students = () => {
         setModal(false);
         setIsEditing(false);
         setStudent(emptyStudent);
-        setError(null);
     }
 
     function refreshPage() {
-        setRefreshing(true);
+        setSearchInput("");
         setSearch("");
+        setBarcodeTerm("");
         setSelectedGrade("");
         setSelectedGroup("");
         setPage(1);
-        loadData().finally(() => setRefreshing(false));
+        refreshStudents();
     }
 
     const groupsForSelectedGrade = useMemo(() => {
@@ -349,21 +309,143 @@ const Students = () => {
     const firstRowNumber = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
     const lastRowNumber = Math.min((page - 1) * PAGE_SIZE + students.length, total);
 
-    const handlePrint = () => {};
-    const handleDownloadTemplate = () => {};
-    const handleImportExcel = () => {};
-    const handleExportPdf = () => {};
+    const handlePrint = (student) => {
+        const studentForPrint = {
+            full_name: student.full_name,
+            barcode: student.barcode
+        };
 
-    if (loading && students.length === 0) {
-        return (
-            <div className="flex items-center justify-center min-h-screen">
-                <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-                    <p className="mt-4 text-gray-500">جاري تحميل الطلاب...</p>
-                </div>
-            </div>
+        printBarcodeWindow(studentForPrint, "سنتر بشتة")
+    };
+    const handleDownloadTemplate = () => {
+        const headers = ['ملاحظات', 'المجموعة', 'المرحلة الدراسية', 'رقم ولي الامر', 'رقم الجوال', 'الباركود', 'الاسم الكامل'];
+        const sampleRow = ['ليس لدي ملاحظات لهذا الطالب', 'بكالوريا', 'الاول الثانوي', '01000000000', '01000000000', '1', 'مثال: عبدالله رافت'];
+        downloadExcelTemplate('قالب_الطلاب.xlsx', headers, sampleRow);
+    };
+    const handleImportExcel = async () => {
+        try {
+            const rows = await pickExcelFile();
+            if (!rows) return;
+            if (!rows.length) return notifyError("الملف فارغ");
+
+            setImporting(true);
+
+            const norm = (v) => String(v ?? "").trim();
+            const findId = (list, name) => {
+                const n = norm(name);
+                if (!n) return null;
+                const found = list.find((item) => norm(item.name) === n);
+                return found ? found.id : null;
+            };
+
+            let ok = 0;
+            const errors = [];
+            setProgress({ done: 0, total: rows.length });
+
+            for (let i = 0; i < rows.length; i++) {
+                const r = rows[i];
+                const line = i + 2;
+                setProgress({ done: i, total: rows.length });
+
+
+                const full_name = norm(r["الاسم الكامل"]);
+                const barcode = norm(r["الباركود"]);
+                const gradeName = norm(r["المرحلة الدراسية"]);
+                const groupName = norm(r["المجموعة"]);
+
+                if (!full_name || !barcode) {
+                    errors.push(`صف ${line}: الاسم أو الباركود ناقص`);
+                    continue;
+                }
+
+                const grade_id = findId(grades, gradeName);
+                if (!grade_id) {
+                    errors.push(`صف ${line}: المرحلة "${gradeName}" غير موجودة`);
+                    continue;
+                }
+
+                const group_id = findId(
+                    groups.filter((g) => String(g.grade_id) === String(grade_id)),
+                    groupName
+                );
+                if (!group_id) {
+                    errors.push(`صف ${line}: المجموعة "${groupName}" غير موجودة`);
+                    continue;
+                }
+
+                const payload = {
+                    barcode,
+                    full_name,
+                    phone: norm(r["رقم الجوال"]),
+                    parent_phone: norm(r["رقم ولي الامر"]),
+                    grade_id: Number(grade_id),
+                    group_id: Number(group_id),
+                    notes: norm(r["ملاحظات"]),
+                };
+
+                try {
+                    const res = await createNewStudent(payload);
+                    if (res && res.success === false) throw new Error(res.message || "فشل الحفظ");
+                    ok++;
+                } catch (err) {
+                    errors.push(`صف ${line}: ${err?.message || "فشل الحفظ"}`);
+                }
+            }
+
+            setProgress({ done: rows.length, total: rows.length });
+
+            refreshStudents();
+            invalidate(qk.assistant.dashboard);
+
+            if (ok) notifySuccess(`تم استيراد ${ok} طالب بنجاح`);
+            if (errors.length) {
+                console.warn("Excel import errors:", errors);
+                notifyError(`فشل استيراد ${errors.length} صف: ${errors.slice(0, 3).join(" | ")}`);
+            }
+        } catch (error) {
+            console.error("Import excel error:", error);
+            notifyError(error, "تعذر قراءة ملف الإكسل");
+        } finally {
+            setImporting(false);
+            setProgress({ done: 0, total: 0 });
+        }
+    };
+
+    const handleExportPdf = () => {
+        if (!students.length) {
+            toast.error('لا يوجد طلاب لتصديرهم');
+            return;
+        }
+
+        const columns = [
+            { header: 'الاسم الكامل', key: 'full_name' },
+            { header: 'الباركود', key: 'barcode' },
+            { header: 'رقم الجوال', key: 'phone' },
+            { header: 'رقم ولي الامر', key: 'parent_phone' },
+            { header: 'المرحلة الدراسية', key: 'grade_name' },
+            { header: 'المجموعة', key: 'group_name' },
+        ];
+
+        const pdfRows = students.map(s => ({
+            full_name: s.full_name,
+            barcode: s.barcode,
+            phone: s.phone === "" ? "-" : s.phone,
+            parent_phone: s.parent_phone === "" ? "-" : s.parent_phone,
+            grade_name: s.grade_name,
+            group_name: s.group_name
+        }))
+
+        const today = new Date();
+        const dateStr = today.toISOString().split('T')[0];
+        const fileName = `كشف_الطلاب_${dateStr}.pdf`;
+
+        exportPdfTable(
+            fileName,
+            'كشف الطلاب',
+            columns,
+            pdfRows
         );
-    }
+    };
 
     return (
         <>
@@ -373,23 +455,6 @@ const Students = () => {
                 transition={{ duration: 0.5 }}
                 className="min-h-screen"
             >
-                {error && (
-                    <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl flex items-center justify-between">
-                        <span>{error}</span>
-                        <button 
-                            onClick={() => setError(null)} 
-                            className="text-red-500 hover:text-red-700"
-                        >
-                            ✕
-                        </button>
-                    </div>
-                )}
-                {successMessage && (
-                    <div className="mb-4 p-4 bg-green-50 border border-green-200 text-green-700 rounded-xl">
-                        {successMessage}
-                    </div>
-                )}
-
                 {/* Header */}
                 <motion.header
                     initial={{ y: -20, opacity: 0 }}
@@ -422,9 +487,9 @@ const Students = () => {
                                 className="flex items-center gap-2 px-4 py-2 bg-white border-2 border-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm">
                                 <Download size={16} /> قالب Excel
                             </motion.button>
-                            <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={handleImportExcel}
-                                className="flex items-center gap-2 px-4 py-2 bg-white border-2 border-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm">
-                                <Upload size={16} /> رفع Excel
+                            <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={handleImportExcel} disabled={importing}
+                                className="flex items-center gap-2 px-4 py-2 bg-white border-2 border-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed">
+                                <Upload size={16} /> {importing ? `جاري الرفع... ${progress.total ? `${progress.done}/${progress.total}` : ""}` : "رفع Excel"}
                             </motion.button>
                             <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={handleExportPdf}
                                 className="flex items-center gap-2 px-4 py-2 bg-white border-2 border-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm">
@@ -441,6 +506,22 @@ const Students = () => {
                             </motion.button>
                         </div>
                     </div>
+
+                    {importing && progress.total > 0 && (
+                        <div className="mt-4">
+                            <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                                <span>جاري رفع الطلاب...</span>
+                                <span>{progress.done} / {progress.total} ({Math.round((progress.done / progress.total) * 100)}%)</span>
+                            </div>
+                            <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                                <div
+                                    className="h-full bg-primary transition-all duration-200"
+                                    style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
+                                />
+                            </div>
+                        </div>
+                    )}
+
 
                     {/* Stats */}
                     <div className="relative mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -479,8 +560,8 @@ const Students = () => {
                                 <Filter size={16} className="text-gray-400" />
                                 <select
                                     value={selectedGrade}
-                                    onChange={(e) => { 
-                                        setSelectedGrade(e.target.value); 
+                                    onChange={(e) => {
+                                        setSelectedGrade(e.target.value);
                                         setSelectedGroup("");
                                         setPage(1);
                                     }}
@@ -512,14 +593,14 @@ const Students = () => {
                             <Search size={18} className="text-gray-400" />
                             <input
                                 type="text"
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
+                                value={searchInput}
+                                onChange={(e) => { setSearchInput(e.target.value); setBarcodeTerm(""); }}
                                 onKeyDown={(e) => { if (e.key === "Enter") searchByBarcode(); }}
                                 placeholder="بحث بالاسم أو الباركود..."
                                 className="bg-transparent focus:outline-none text-sm w-full"
                             />
-                            {search && (
-                                <button onClick={() => { setSearch(''); loadData(); }} className="text-gray-400 hover:text-gray-600">
+                            {searchInput && (
+                                <button onClick={() => { setSearchInput(''); setSearch(''); setBarcodeTerm(''); }} className="text-gray-400 hover:text-gray-600">
                                     <X size={16} />
                                 </button>
                             )}
@@ -553,7 +634,7 @@ const Students = () => {
                         <table className="w-full min-w-[800px]">
                             <thead className="bg-gradient-to-r from-gray-50 to-gray-100/50 sticky top-0 z-10">
                                 <tr>
-                                    {['الباركود', 'الاسم', 'الصف', 'المجموعة', 'الهاتف', 'ولي الأمر', 'الإجراءات'].map((header, idx) => (
+                                    {['الباركود ↓', 'الاسم', 'الصف', 'المجموعة', 'الهاتف', 'ولي الأمر', 'الإجراءات'].map((header, idx) => (
                                         <th key={idx} className={`text-right py-4 ${idx === 0 ? 'pr-6' : ''} ${idx === 6 ? 'pr-6' : ''} text-sm font-semibold text-gray-600`}>
                                             {header}
                                         </th>
@@ -562,7 +643,13 @@ const Students = () => {
                             </thead>
                             <tbody className="divide-y divide-gray-100">
                                 <AnimatePresence>
-                                    {students.length === 0 ? (
+                                    {tableLoading ? (
+                                        <tr>
+                                            <td colSpan={7} className="py-6">
+                                                <SkeletonRows rows={6} />
+                                            </td>
+                                        </tr>
+                                    ) : students.length === 0 ? (
                                         <motion.tr initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                                             <td colSpan={7} className="text-center py-16">
                                                 <div className="flex flex-col items-center gap-3">
@@ -599,7 +686,7 @@ const Students = () => {
                             <div className="flex items-center gap-2">
                                 <button
                                     onClick={() => setPage(p => Math.max(1, p - 1))}
-                                    disabled={page === 1 || loading}
+                                    disabled={page === 1 || tableLoading}
                                     className="p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
                                     title="السابق"
                                 >
@@ -617,16 +704,16 @@ const Students = () => {
                                     } else {
                                         pageNum = page - 2 + i;
                                     }
-                                    
+
                                     if (pageNum > 0 && pageNum <= totalPages) {
                                         return (
                                             <button
                                                 key={pageNum}
                                                 onClick={() => setPage(pageNum)}
-                                                disabled={loading}
+                                                disabled={tableLoading}
                                                 className={`px-3 py-1 rounded-lg border font-medium transition-colors ${pageNum === page
-                                                        ? "bg-primary text-white border-primary"
-                                                        : "bg-white border-gray-200 text-gray-700 hover:bg-gray-100"
+                                                    ? "bg-primary text-white border-primary"
+                                                    : "bg-white border-gray-200 text-gray-700 hover:bg-gray-100"
                                                     }`}
                                             >
                                                 {pageNum}
@@ -638,7 +725,7 @@ const Students = () => {
 
                                 <button
                                     onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                                    disabled={page >= totalPages || loading}
+                                    disabled={page >= totalPages || tableLoading}
                                     className="p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
                                     title="التالي"
                                 >
@@ -659,7 +746,6 @@ const Students = () => {
                     isEditing={isEditing}
                     onSave={saveStudent}
                     onClose={closeDialog}
-                    error={error}
                 />
             )}
         </>

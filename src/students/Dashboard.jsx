@@ -1,7 +1,6 @@
-// Dashboard.jsx - Student (Normal Font Sizes)
-
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import Accent from "../assets/Accent.svg";
+import { notifySuccess } from "../lib/notify"; // ✅ جديد
 import {
   CalendarCheck2,
   BarChart3,
@@ -15,6 +14,11 @@ import {
   CheckCircle2,
   XCircle,
   TrendingUp,
+  RefreshCw,
+  AlertCircle,
+  Clock,
+  GraduationCap,
+  Loader2,
 } from "lucide-react";
 import {
   PieChart,
@@ -40,7 +44,7 @@ import {
 } from "../api/student/actions";
 import getUser from "../utils/getUser";
 import { useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { pageVariants, itemVariants } from "../motion";
 
 const Dashboard = () => {
@@ -48,19 +52,19 @@ const Dashboard = () => {
   const user = getUser();
   const [profile, setProfile] = useState(null);
   const [stats, setStats] = useState(null);
-  const [availableExams, setAvailableExams] = useState([]);
+  const [allExams, setAllExams] = useState([]);
   const [playlists, setPlaylists] = useState([]);
   const [paymentHistory, setPaymentHistory] = useState([]);
   const [attendanceHistory, setAttendanceHistory] = useState([]);
   const [examHistory, setExamHistory] = useState([]);
   const [paperExams, setPaperExams] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
       const [
         profileRes,
@@ -76,25 +80,48 @@ const Dashboard = () => {
         fetchStudentStats(),
         fetchAvailableExams(),
         fetchPlaylists(),
-        fetchPaymentHistory(1, 5),
-        fetchAttendanceHistory(1, 10),
-        fetchExamHistory(1, 5),
-        fetchPaperExams(1, 5),
+        fetchPaymentHistory(),
+        fetchAttendanceHistory(),
+        fetchExamHistory(),
+        fetchPaperExams(),
       ]);
+
       if (profileRes.success) setProfile(profileRes.data);
       if (statsRes.success) setStats(statsRes.data);
-      if (examsRes.success) setAvailableExams(examsRes.data);
-      if (playlistsRes.success) setPlaylists(playlistsRes.data);
-      if (paymentsRes.success) setPaymentHistory(paymentsRes.data);
-      if (attendanceRes.success) setAttendanceHistory(attendanceRes.data);
-      if (examHistoryRes.success) setExamHistory(examHistoryRes.data);
-      if (paperExamsRes.success) setPaperExams(paperExamsRes.data);
-    } catch (error) {
-      console.error("Dashboard load error:", error);
+      if (examsRes.success) setAllExams(examsRes.data || []);
+      if (playlistsRes.success) setPlaylists(playlistsRes.data || []);
+      if (paymentsRes.success) setPaymentHistory(paymentsRes.data || []);
+      if (attendanceRes.success) setAttendanceHistory(attendanceRes.data || []);
+      if (examHistoryRes.success) setExamHistory(examHistoryRes.data || []);
+      if (paperExamsRes.success) setPaperExams(paperExamsRes.data || []);
+    } catch (err) {
+      console.error("Dashboard load error:", err);
+      setError("فشل تحميل البيانات");
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // ✅ تحديث مع لودر ورسالة نجاح
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadData();
+    setRefreshing(false);
+    notifySuccess("تم تحديث البيانات بنجاح");
   };
+
+  const availableExams = useMemo(() => {
+    const now = Date.now();
+    return allExams.filter((exam) => {
+      const startTime = new Date(exam.start_at).getTime();
+      const endTime = new Date(exam.end_at).getTime();
+      return now >= startTime && now <= endTime && !exam.attempted;
+    });
+  }, [allExams]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -107,21 +134,18 @@ const Dashboard = () => {
   const greeting = getGreeting();
   const GreetingIcon = greeting.icon;
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
+  const toNumber = useCallback((value) => {
+    const num = parseFloat(value);
+    return isNaN(num) ? 0 : num;
+  }, []);
 
-  const attendanceRate = Number(stats?.attendance_percentage || 0);
-  const presentDays = Number(stats?.present_days || 0);
-  const absentDays = Number(stats?.absent_days || 0);
-  const avgScore = Number(stats?.avg_paper_degree || 0);
-  const totalVideos = playlists.reduce(
-    (sum, p) => sum + Number(p.videos_count || 0),
-    0,
+  const attendanceRate = toNumber(stats?.attendance_percentage);
+  const presentDays = toNumber(stats?.present_days);
+  const absentDays = toNumber(stats?.absent_days);
+  const avgScore = toNumber(stats?.avg_paper_degree);
+  const totalVideos = useMemo(
+    () => playlists.reduce((sum, p) => sum + toNumber(p.videos_count), 0),
+    [playlists, toNumber],
   );
 
   const lastPayment = paymentHistory[0] || null;
@@ -130,155 +154,244 @@ const Dashboard = () => {
   const lastExam = examHistory[0] || null;
   const nextExam = availableExams[0] || null;
 
-  const attendancePieData = [
-    { name: "حضور", value: presentDays },
-    { name: "غياب", value: absentDays },
-  ];
+  const attendancePieData = useMemo(
+    () => [
+      { name: "حضور", value: presentDays },
+      { name: "غياب", value: absentDays },
+    ],
+    [presentDays, absentDays],
+  );
 
   const COLORS = ["#16a34a", "#dc2626"];
 
-  const examScoresData = [
-    ...examHistory.map((e) => ({
-      name: e.exam_title,
-      score:
-        e.full_mark > 0
-          ? Math.round((Number(e.score) / Number(e.full_mark)) * 100)
-          : 0,
-    })),
-    ...paperExams.map((e) => ({
-      name: e.title || e.exam_title,
-      score:
-        e.total_degree > 0
-          ? Math.round(
-              (Number(e.student_degree) / Number(e.total_degree)) * 100,
-            )
-          : 0,
-    })),
-  ]
-    .slice(0, 5)
-    .reverse();
+  const examScoresData = useMemo(
+    () =>
+      [
+        ...examHistory.map((e) => ({
+          name: e.exam_title || "امتحان",
+          score:
+            e.full_mark > 0
+              ? Math.round((toNumber(e.score) / toNumber(e.full_mark)) * 100)
+              : 0,
+        })),
+        ...paperExams.map((e) => ({
+          name: e.title || e.exam_title || "امتحان",
+          score:
+            e.total_degree > 0
+              ? Math.round(
+                  (toNumber(e.student_degree) / toNumber(e.total_degree)) * 100,
+                )
+              : 0,
+        })),
+      ]
+        .slice(0, 5)
+        .reverse(),
+    [examHistory, paperExams, toNumber],
+  );
+
+  if (loading && !refreshing) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh] bg-gray-50">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-4 border-[#009966] border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-gray-500 text-sm">جاري تحميل لوحة التحكم...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh] bg-gray-50">
+        <div className="flex flex-col items-center gap-4">
+          <AlertCircle size={48} className="text-red-400" />
+          <p className="text-gray-600">{error}</p>
+          <button
+            onClick={loadData}
+            className="px-4 py-2 bg-[#009966] text-white rounded-lg hover:bg-[#007a52] transition"
+          >
+            إعادة المحاولة
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <motion.section
       variants={pageVariants}
       initial="hidden"
       animate="show"
-      className="flex flex-col gap-4 w-full min-h-screen"
+      className="flex flex-col gap-4 sm:gap-5 w-full min-h-screen p-3 sm:p-5"
       dir="rtl"
     >
       {/* Hero */}
       <motion.div
         variants={itemVariants}
-        className="relative overflow-hidden text-white rounded-2xl bg-linear-to-l from-[#003322] to-[#009966] p-5 sm:p-6"
+        className="relative overflow-hidden text-white rounded-2xl bg-linear-to-l from-[#003322] to-[#009966] p-4 sm:p-6"
       >
         <img
           className="absolute left-0 top-0 h-full w-32 sm:w-48 opacity-20"
           src={Accent}
           alt=""
         />
-        <div className="relative z-10 flex flex-col gap-2">
-          <div className="flex items-center gap-2 text-sm sm:text-base opacity-80">
-            <GreetingIcon size={16} />
-            <span>{greeting.text}</span>
+        <div className="relative z-10 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-2 text-sm sm:text-base opacity-80">
+              <GreetingIcon size={16} />
+              <span>{greeting.text}</span>
+            </div>
+            <span className="text-xl sm:text-2xl md:text-3xl font-bold">
+              {profile?.full_name || user?.full_name || "طالبنا العزيز"}
+            </span>
+            <span className="text-[10px] sm:text-xs opacity-80 flex items-center gap-1.5">
+              <GraduationCap size={12} />
+              {profile?.grade_name || "-"} - {profile?.group_name || "-"}
+            </span>
           </div>
-          <span className="text-2xl sm:text-3xl font-bold">
-            {user?.full_name || "طالبنا العزيز"}
-          </span>
-          <span className="text-[10px] sm:text-sm opacity-80">
-            {new Date().toLocaleDateString("ar-EG", {
-              weekday: "long",
-              day: "numeric",
-              month: "long",
-              year: "numeric",
-            })}
-          </span>
+          <div className="flex flex-col gap-1 text-left">
+            <span className="text-[10px] sm:text-xs opacity-80">
+              {new Date().toLocaleDateString("ar-EG", {
+                weekday: "long",
+                day: "numeric",
+                month: "long",
+                year: "numeric",
+              })}
+            </span>
+            {/* ✅ زرار التحديث مع لودر */}
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center gap-2 bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition self-start sm:self-auto disabled:opacity-70"
+            >
+              {refreshing ? (
+                <>
+                  <Loader2 size={12} className="animate-spin" />
+                  جاري التحديث...
+                </>
+              ) : (
+                <>
+                  <RefreshCw size={12} />
+                  تحديث
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </motion.div>
 
       {/* Quick Stats */}
       <motion.div
         variants={itemVariants}
-        className="grid grid-cols-2 sm:grid-cols-4 gap-3"
+        className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3"
       >
-        <div className="bg-white border-2 border-transparent hover:border-[#009966] hover:translate-y-1 hover:shadow-[8px_5px_0_#009966] transition-all duration-100 rounded-2xl shadow-[5px_2px_0_#009966] p-4 text-center">
-          <CalendarCheck2 className="text-green-600 mx-auto mb-2" size={20} />
-          <span className="font-bold text-2xl block">{attendanceRate}%</span>
-          <span className="text-sm text-gray-500">الحضور</span>
+        <div className="bg-white border-2 border-transparent hover:border-[#009966] hover:translate-y-1 hover:shadow-[8px_5px_0_#009966] transition-all duration-100 rounded-2xl shadow-[5px_2px_0_#009966] p-3 sm:p-4 text-center">
+          <CalendarCheck2
+            className="text-green-600 mx-auto mb-1.5 sm:mb-2"
+            size={18}
+          />
+          <span className="font-bold text-xl sm:text-2xl block">
+            {attendanceRate}%
+          </span>
+          <span className="text-[10px] sm:text-sm text-gray-500">الحضور</span>
         </div>
-        <div className="bg-white border-2 border-transparent hover:border-[#009966] hover:translate-y-1 hover:shadow-[8px_5px_0_#009966] transition-all duration-100 rounded-2xl shadow-[5px_2px_0_#009966] p-4 text-center">
-          <BarChart3 className="text-blue-600 mx-auto mb-2" size={20} />
-          <span className="font-bold text-2xl block">{avgScore}</span>
-          <span className="text-sm text-gray-500">المتوسط</span>
+        <div className="bg-white border-2 border-transparent hover:border-[#009966] hover:translate-y-1 hover:shadow-[8px_5px_0_#009966] transition-all duration-100 rounded-2xl shadow-[5px_2px_0_#009966] p-3 sm:p-4 text-center">
+          <BarChart3
+            className="text-blue-600 mx-auto mb-1.5 sm:mb-2"
+            size={18}
+          />
+          <span className="font-bold text-xl sm:text-2xl block">
+            {avgScore}
+          </span>
+          <span className="text-[10px] sm:text-sm text-gray-500">المتوسط</span>
         </div>
-        <div className="bg-white border-2 border-transparent hover:border-[#009966] hover:translate-y-1 hover:shadow-[8px_5px_0_#009966] transition-all duration-100 rounded-2xl shadow-[5px_2px_0_#009966] p-4 text-center">
-          <BookOpen className="text-orange-600 mx-auto mb-2" size={20} />
-          <span className="font-bold text-2xl block">{totalVideos}</span>
-          <span className="text-sm text-gray-500">فيديو</span>
+        <div className="bg-white border-2 border-transparent hover:border-[#009966] hover:translate-y-1 hover:shadow-[8px_5px_0_#009966] transition-all duration-100 rounded-2xl shadow-[5px_2px_0_#009966] p-3 sm:p-4 text-center">
+          <BookOpen
+            className="text-orange-600 mx-auto mb-1.5 sm:mb-2"
+            size={18}
+          />
+          <span className="font-bold text-xl sm:text-2xl block">
+            {totalVideos}
+          </span>
+          <span className="text-[10px] sm:text-sm text-gray-500">فيديو</span>
         </div>
-        <div className="bg-white border-2 border-transparent hover:border-[#009966] hover:translate-y-1 hover:shadow-[8px_5px_0_#009966] transition-all duration-100 rounded-2xl shadow-[5px_2px_0_#009966] p-4 text-center">
-          <FileCheck2 className="text-purple-600 mx-auto mb-2" size={20} />
-          <span className="font-bold text-2xl block">
+        <div className="bg-white border-2 border-transparent hover:border-[#009966] hover:translate-y-1 hover:shadow-[8px_5px_0_#009966] transition-all duration-100 rounded-2xl shadow-[5px_2px_0_#009966] p-3 sm:p-4 text-center">
+          <FileCheck2
+            className="text-purple-600 mx-auto mb-1.5 sm:mb-2"
+            size={18}
+          />
+          <span className="font-bold text-xl sm:text-2xl block">
             {availableExams.length}
           </span>
-          <span className="text-sm text-gray-500">امتحانات</span>
+          <span className="text-[10px] sm:text-sm text-gray-500">امتحانات</span>
         </div>
       </motion.div>
 
       {/* Last Payment */}
       <motion.div
         variants={itemVariants}
-        className="bg-white rounded-xl border border-gray-200 p-4"
+        className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4"
       >
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-10 h-10 rounded-full bg-purple-50 flex items-center justify-center">
-            <Wallet className="text-purple-600" size={18} />
+        <div className="flex items-center gap-3 mb-2 sm:mb-3">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-purple-50 flex items-center justify-center shrink-0">
+            <Wallet className="text-purple-600" size={16} />
           </div>
-          <span className="text-base font-bold text-gray-700">آخر دفعة</span>
+          <span className="text-sm sm:text-base font-bold text-gray-700">
+            آخر دفعة
+          </span>
         </div>
-        {lastPayment ? (
-          <div className="flex justify-between items-center">
-            <div>
-              <span className="font-bold text-xl text-gray-900 block">
-                {lastPayment.amount} جنيه
+        <AnimatePresence>
+          {lastPayment ? (
+            <motion.div
+              initial={{ opacity: 0, y: 5 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex justify-between items-center flex-wrap gap-2"
+            >
+              <div>
+                <span className="font-bold text-lg sm:text-xl text-gray-900 block">
+                  {lastPayment.amount} جنيه
+                </span>
+                <span className="text-xs sm:text-sm text-gray-500">
+                  {new Date(lastPayment.payment_date).toLocaleDateString(
+                    "ar-EG",
+                    {
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric",
+                    },
+                  )}
+                  {" - "}عن شهر {lastPayment.subscription_month || "-"}
+                </span>
+              </div>
+              <span className="text-xs sm:text-sm font-bold px-3 py-1.5 rounded-full bg-green-100 text-green-700">
+                مدفوع
               </span>
-              <span className="text-sm text-gray-500">
-                {new Date(lastPayment.payment_date).toLocaleDateString(
-                  "ar-EG",
-                  { day: "numeric", month: "long", year: "numeric" },
-                )}
-                {" - "}عن شهر{" "}
-                {new Date(lastPayment.subscription_month).toLocaleDateString(
-                  "ar-EG",
-                  { month: "long", year: "numeric" },
-                )}
-              </span>
-            </div>
-            <span className="text-sm font-bold px-3 py-1.5 rounded-full bg-green-100 text-green-700">
-              مدفوع
-            </span>
-          </div>
-        ) : (
-          <p className="text-gray-400 text-sm">لا توجد دفعات</p>
-        )}
+            </motion.div>
+          ) : (
+            <p className="text-gray-400 text-xs sm:text-sm">لا توجد دفعات</p>
+          )}
+        </AnimatePresence>
       </motion.div>
 
       {/* Recent Events */}
       <motion.div
         variants={itemVariants}
-        className="bg-white rounded-xl border border-gray-200 p-4"
+        className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4"
       >
-        <h3 className="font-bold text-base mb-3">آخر الأحداث</h3>
-        <div className="flex flex-col gap-3">
+        <h3 className="font-bold text-sm sm:text-base mb-2 sm:mb-3">
+          آخر الأحداث
+        </h3>
+        <div className="flex flex-col gap-2.5">
           {lastExam && (
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 bg-gray-50 rounded-lg p-2.5">
               <div className="w-9 h-9 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
                 <TrendingUp className="text-blue-600" size={16} />
               </div>
               <div className="flex-1 min-w-0">
-                <span className="text-sm font-bold block truncate">
+                <span className="text-xs sm:text-sm font-bold block truncate">
                   {lastExam.exam_title}
                 </span>
-                <span className="text-xs text-gray-500">
+                <span className="text-[10px] sm:text-xs text-gray-500">
                   {new Date(lastExam.submitted_at).toLocaleDateString("ar-EG", {
                     day: "numeric",
                     month: "long",
@@ -286,7 +399,11 @@ const Dashboard = () => {
                 </span>
               </div>
               <span
-                className={`text-sm font-bold ${lastExam.result_status === "passed" ? "text-green-600" : "text-red-600"}`}
+                className={`text-xs sm:text-sm font-bold ${
+                  lastExam.result_status === "passed"
+                    ? "text-green-600"
+                    : "text-red-600"
+                }`}
               >
                 {lastExam.score}/{lastExam.full_mark}
               </span>
@@ -294,16 +411,19 @@ const Dashboard = () => {
           )}
 
           {lastAbsence && (
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-red-50 flex items-center justify-center shrink-0">
+            <div className="flex items-center gap-3 bg-red-50 rounded-lg p-2.5">
+              <div className="w-9 h-9 rounded-full bg-red-100 flex items-center justify-center shrink-0">
                 <XCircle className="text-red-600" size={16} />
               </div>
               <div className="flex-1 min-w-0">
-                <span className="text-sm font-bold block">غياب</span>
-                <span className="text-xs text-gray-500">
+                <span className="text-xs sm:text-sm font-bold block">غياب</span>
+                <span className="text-[10px] sm:text-xs text-gray-500">
                   {new Date(lastAbsence.attendance_date).toLocaleDateString(
                     "ar-EG",
-                    { day: "numeric", month: "long" },
+                    {
+                      day: "numeric",
+                      month: "long",
+                    },
                   )}
                 </span>
               </div>
@@ -311,23 +431,24 @@ const Dashboard = () => {
           )}
 
           {nextExam && (
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-green-50 flex items-center justify-center shrink-0">
+            <div className="flex items-center gap-3 bg-green-50 rounded-lg p-2.5">
+              <div className="w-9 h-9 rounded-full bg-green-100 flex items-center justify-center shrink-0">
                 <CheckCircle2 className="text-green-600" size={16} />
               </div>
               <div className="flex-1 min-w-0">
-                <span className="text-sm font-bold block truncate">
-                  {nextExam.title}
+                <span className="text-xs sm:text-sm font-bold block truncate">
+                  {nextExam.title || nextExam.exam_title}
                 </span>
-                <span className="text-xs text-gray-500">
+                <span className="text-[10px] sm:text-xs text-gray-500 flex items-center gap-1">
+                  <Clock size={10} />
                   {nextExam.duration_minutes} دقيقة | {nextExam.full_mark} درجة
                 </span>
               </div>
               <button
                 onClick={() => navigate("/student/exams")}
-                className="text-sm text-blue-600 font-bold flex items-center gap-1"
+                className="text-xs sm:text-sm text-blue-600 font-bold flex items-center gap-1 shrink-0"
               >
-                <Play size={14} /> ابدأ
+                <Play size={12} /> ابدأ
               </button>
             </div>
           )}
@@ -339,17 +460,17 @@ const Dashboard = () => {
         variants={itemVariants}
         className="grid grid-cols-1 lg:grid-cols-2 gap-3"
       >
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <h3 className="font-bold text-base mb-2">توزيع الحضور</h3>
-          <div className="h-45">
+        <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4">
+          <h3 className="font-bold text-sm sm:text-base mb-2">توزيع الحضور</h3>
+          <div className="h-40 sm:h-45">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={attendancePieData}
                   cx="50%"
                   cy="50%"
-                  innerRadius={40}
-                  outerRadius={60}
+                  innerRadius={35}
+                  outerRadius={55}
                   paddingAngle={4}
                   dataKey="value"
                 >
@@ -363,7 +484,7 @@ const Dashboard = () => {
               </PieChart>
             </ResponsiveContainer>
           </div>
-          <div className="flex justify-center gap-3 flex-wrap text-sm">
+          <div className="flex justify-center gap-3 flex-wrap text-xs sm:text-sm mt-1.5">
             {attendancePieData.map((item, idx) => (
               <span key={idx} className="flex items-center gap-1.5">
                 <span
@@ -376,18 +497,18 @@ const Dashboard = () => {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <h3 className="font-bold text-base mb-2">آخر الدرجات</h3>
+        <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4">
+          <h3 className="font-bold text-sm sm:text-base mb-2">آخر الدرجات</h3>
           {examScoresData.length === 0 ? (
-            <p className="text-gray-400 text-sm text-center py-8">
+            <p className="text-gray-400 text-xs sm:text-sm text-center py-8">
               لا توجد نتائج
             </p>
           ) : (
-            <div className="h-45">
+            <div className="h-40 sm:h-45">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={examScoresData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                  <XAxis dataKey="name" tick={{ fontSize: 9 }} />
                   <YAxis hide />
                   <Tooltip
                     contentStyle={{ fontSize: "12px", borderRadius: "8px" }}
@@ -401,13 +522,16 @@ const Dashboard = () => {
       </motion.div>
 
       {/* Quick Actions */}
-      <motion.div variants={itemVariants} className="grid grid-cols-2 gap-3">
+      <motion.div
+        variants={itemVariants}
+        className="grid grid-cols-2 gap-2 sm:gap-3"
+      >
         <button
           onClick={() => navigate("/student/exams")}
-          className="bg-blue-50 rounded-xl p-3 flex items-center gap-3 text-right border border-blue-100"
+          className="bg-blue-50 rounded-xl p-3 flex items-center gap-3 text-right border border-blue-100 hover:border-blue-300 transition"
         >
           <FileCheck2 size={18} className="text-blue-600 shrink-0" />
-          <div>
+          <div className="min-w-0">
             <span className="text-sm font-bold text-blue-700 block">
               الامتحانات
             </span>
@@ -418,10 +542,10 @@ const Dashboard = () => {
         </button>
         <button
           onClick={() => navigate("/student/courses")}
-          className="bg-green-50 rounded-xl p-3 flex items-center gap-3 text-right border border-green-100"
+          className="bg-green-50 rounded-xl p-3 flex items-center gap-3 text-right border border-green-100 hover:border-green-300 transition"
         >
           <Play size={18} className="text-green-600 shrink-0" />
-          <div>
+          <div className="min-w-0">
             <span className="text-sm font-bold text-green-700 block">
               المحاضرات
             </span>

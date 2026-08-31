@@ -14,6 +14,7 @@ import StudentCourses from "./students/Courses.jsx";
 import StudentDegrees from "./students/Degrees.jsx";
 import StudentExams from "./students/Exams.jsx";
 import StudentExamTaking from "./students/ExamTaking.jsx";
+import StudentExamReview from "./students/ExamReview.jsx"; // ✅ جديد
 import StudentHomework from "./students/Homework.jsx";
 import StudentProfile from "./students/Profile.jsx";
 import StudentWatchVideo from "./students/WatchVideo.jsx";
@@ -51,6 +52,7 @@ import TeacherAssistants from "./teachers/Assistants.jsx";
 import TeacherExamResults from "./teachers/ExamResults.jsx";
 import TeacherStudentDetails from "./teachers/StudentDetails.jsx";
 import TeacherWatchVideo from "./teachers/WatchVideo.jsx";
+import TeacherHomeworks from "./teachers/Homework.jsx";
 
 import NotFound from "./pages/NotFound.jsx";
 
@@ -79,7 +81,9 @@ export const router = createBrowserRouter([
     Component: ParentDashboard,
   },
 
-  // Student Routes
+  // ============================================
+  // STUDENT ROUTES
+  // ============================================
   {
     path: "/student",
     Component: () => (
@@ -95,12 +99,15 @@ export const router = createBrowserRouter([
       { path: "degrees", Component: StudentDegrees },
       { path: "exams", Component: StudentExams },
       { path: "exams/:examId", Component: StudentExamTaking },
+      { path: "exams/review/:attemptId", Component: StudentExamReview }, // ✅ جديد
       { path: "homework", Component: StudentHomework },
       { path: "profile", Component: StudentProfile },
     ],
   },
 
-  // Assistant Routes
+  // ============================================
+  // ASSISTANT ROUTES
+  // ============================================
   {
     path: "/assistant",
     Component: () => (
@@ -112,13 +119,14 @@ export const router = createBrowserRouter([
       { index: true, Component: AssistantManagementDashboard },
       { path: "profile", Component: AssistantProfile },
 
-      // Online section
       { path: "online/videos", Component: AssistantOnlineVideos },
-      { path: "online/videos/watch/:videoId", Component: AssistantOnlineWatchVideo },
+      {
+        path: "online/videos/watch/:videoId",
+        Component: AssistantOnlineWatchVideo,
+      },
       { path: "online/exams", Component: AssistantOnlineExams },
       { path: "online/homework", Component: AssistantOnlineHomework },
 
-      // Management section
       { path: "management", Component: AssistantManagementDashboard },
       { path: "management/students", Component: AssistantManagementStudents },
       {
@@ -128,14 +136,22 @@ export const router = createBrowserRouter([
       { path: "management/groups", Component: AssistantManagementGroups },
       { path: "management/grades", Component: AssistantManagementGrades },
       { path: "management/exams", Component: AssistantManagementExams },
-      { path: "management/exams/:id", Component: AssistantManagementAddDegree },
+      {
+        path: "management/exams/:id",
+        Component: AssistantManagementAddDegree,
+      },
       { path: "management/payments", Component: AssistantManagementPayments },
       { path: "management/whatsapp", Component: AssistantManagementWhatsApp },
-      { path: "management/settings", Component: AssistantManagementSettings },
+      {
+        path: "management/settings",
+        Component: AssistantManagementSettings,
+      },
     ],
   },
 
-  // Teacher Routes
+  // ============================================
+  // TEACHER ROUTES
+  // ============================================
   {
     path: "/teacher",
     Component: () => (
@@ -155,8 +171,13 @@ export const router = createBrowserRouter([
       { path: "students/:studentId", Component: TeacherStudentDetails },
       { path: "assistants", Component: TeacherAssistants },
       { path: "exams/:type/:examId", Component: TeacherExamResults },
+      { path: "homework", Component: TeacherHomeworks },
     ],
   },
+
+  // ============================================
+  // 404
+  // ============================================
   {
     path: "*",
     Component: NotFound,

@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useState, useEffect } from "react";
-import { ArrowRight, Save, BookOpen, Award, Users, CheckCircle, AlertCircle, ChevronRight, ChevronLeft, Search, Download, Upload, X, School } from "lucide-react";
+import { ArrowRight, Save, BookOpen, Award, Users, CheckCircle, AlertCircle, ChevronRight, ChevronLeft, Search, Download, Upload, X, School, FileText } from "lucide-react";
 import { motion } from "framer-motion";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -11,6 +11,7 @@ import {
   fetchExamResultStats,
   fetchAllStudents
 } from "../../../api/assistant/actions";
+import { pickExcelFile, exportPdfTable, exportAoaExcel } from "../../../utils/office.js"
 import { LoadingState } from "../components/Spinner";
 import { toast } from "sonner";
 
@@ -52,10 +53,10 @@ const DegreeRow = memo(function DegreeRow({ student, index, rowNumber, value, st
             placeholder="الدرجة"
             disabled={isSaving}
             className={`w-28 rounded-xl border-2 px-4 py-2 text-center font-medium focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${isPassing
-                ? 'border-green-300 bg-green-50 text-green-700'
-                : status === 'fail'
-                  ? 'border-red-300 bg-red-50 text-red-700'
-                  : 'border-gray-200 bg-gray-50 text-gray-700'
+              ? 'border-green-300 bg-green-50 text-green-700'
+              : status === 'fail'
+                ? 'border-red-300 bg-red-50 text-red-700'
+                : 'border-gray-200 bg-gray-50 text-gray-700'
               } disabled:opacity-60`}
           />
           <span className="text-xs text-gray-400">/ {maxScore}</span>
@@ -63,10 +64,10 @@ const DegreeRow = memo(function DegreeRow({ student, index, rowNumber, value, st
       </td>
       <td className="text-right pr-6 py-4">
         <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium ${isPassing
-            ? 'bg-green-100 text-green-700'
-            : status === 'fail'
-              ? 'bg-red-100 text-red-700'
-              : 'bg-gray-100 text-gray-500'
+          ? 'bg-green-100 text-green-700'
+          : status === 'fail'
+            ? 'bg-red-100 text-red-700'
+            : 'bg-gray-100 text-gray-500'
           }`}>
           {isPassing ? 'ناجح' : status === 'fail' ? 'راسب' : 'غير مدخل'}
         </span>
@@ -87,6 +88,7 @@ const AddDegree = () => {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [isSaving, setIsSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
   const [stats, setStats] = useState(null);
@@ -241,6 +243,94 @@ const AddDegree = () => {
   const goBack = () => {
     navigate('/assistant/management/exams');
   };
+
+  const handleDownloadTemplate = () => {
+    const headers = ['الدرجة', 'الباركود', 'اسم الطالب'];
+    const rows = students.map(s => [results[s.id], s.barcode, s.full_name]);
+    const filename = `درجات_${String(exam?.title || "الامتحان").replace(/[\\/:*?"<>|]/g, "")}.xlsx`;
+    exportAoaExcel(filename, "Degrees", [headers, ...rows]);
+  };
+
+  const handleImportExcel = async () => {
+    try {
+      const rows = await pickExcelFile();
+      if (!rows) return;
+      if (!rows.length) return toast.error("الملف فارغ");
+
+      setImporting(true);
+
+      const norm = (v) => String(v ?? "").trim();
+      const byBarcode = new Map(students.map(s => [norm(s.barcode), s]));
+      const byName = new Map(students.map(s => [norm(s.full_name), s]));
+
+      const next = {};
+      let ok = 0;
+      const errors = [];
+
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const line = i + 2;
+
+        const barcode = norm(r["الباركود"]);
+        const name = norm(r["اسم الطالب"]);
+        const raw = norm(r["الدرجة"]);
+
+        const student = byBarcode.get(barcode) || byName.get(name);
+        if (!student) { errors.push(`صف ${line}: الطالب غير موجود (${barcode || name})`); continue; }
+        if (raw === "") continue;
+
+        const degree = Number(raw);
+        if (Number.isNaN(degree) || degree < 0) { errors.push(`صف ${line}: درجة غير صحيحة`); continue; }
+        if (maxScore > 0 && degree > maxScore) { errors.push(`صف ${line}: الدرجة أكبر من الدرجة الكلية (${maxScore})`); continue; }
+
+        next[student.id] = degree;
+        ok++;
+      }
+
+      if (ok) {
+        setResults(prev => ({ ...prev, ...next }));
+        toast.success(`تم تحميل ${ok} درجة — اضغط "حفظ الدرجات" للحفظ`);
+      } else {
+        toast.error("لم يتم تحميل أي درجة");
+      }
+
+      if (errors.length) {
+        toast.error(`تم تجاهل ${errors.length} صف`);
+        console.warn("Excel import errors:", errors);
+      }
+    } catch (e) {
+      toast.error(e?.message || "حدث خطأ أثناء رفع الملف");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleExportPdf = () => {
+    const columns = [
+      { header: 'اسم الطالب', key: 'full_name' },
+      { header: 'الباركود', key: 'barcode' },
+      { header: 'الدرجة', key: 'degree' },
+      { header: 'الدرجة الكلية', key: 'total_degree' },
+    ];
+
+    const pdfRows = students.map(s => ({
+      full_name: s.full_name,
+      barcode: s.barcode,
+      degree: results[s.id] == null ? "-" : results[s.id],
+      total_degree: maxScore
+    }))
+
+    const today = new Date();
+    const dateStr = today.toISOString().split('T')[0];
+    const fileName = `كشف_درجات_${String(exam?.title)}_${dateStr}.pdf`;
+
+    exportPdfTable(
+      fileName,
+      'كشف الدرجات',
+      columns,
+      pdfRows
+    );
+  }
 
   if (loading) {
     return <LoadingState label="جاري تحميل بيانات الامتحان..." />;
@@ -401,16 +491,23 @@ const AddDegree = () => {
         </div>
 
         <button
-          onClick={() => { }}
+          onClick={handleDownloadTemplate}
           className="flex items-center justify-center gap-2 px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all"
         >
           <Download size={16} /> قالب Excel
         </button>
         <button
-          onClick={() => { }}
-          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl text-sm font-medium hover:shadow-lg hover:shadow-primary/30 transition-all"
+          onClick={handleImportExcel}
+          disabled={importing}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl text-sm font-medium hover:shadow-lg hover:shadow-primary/30 transition-all disabled:opacity-60"
         >
-          <Upload size={16} /> رفع Excel
+          <Upload size={16} /> {importing ? "جاري الرفع..." : "رفع Excel"}
+        </button>
+        <button
+          onClick={handleExportPdf}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all"
+        >
+          <FileText size={16} /> كشف Pdf
         </button>
       </motion.div>
 

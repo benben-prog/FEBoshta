@@ -10,6 +10,7 @@
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
     "@tailwindcss/vite": "^4.1.18",
+    "@tanstack/react-query": "^5.102.5",
     "file-saver": "^2.0.5",
     "framer-motion": "^12.42.2",
     "html2pdf": "^0.0.11",
@@ -20,6 +21,7 @@
     "react-dom": "^19.2.0",
     "react-icons": "^5.5.0",
     "react-router-dom": "^7.18.2",
+    "react-youtube": "^10.1.0",
     "recharts": "^3.8.0",
     "sonner": "^2.0.6",
     "tailwindcss": "^4.1.18",
@@ -40,8 +42,5 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "module",
-  "engines": {
-    "node": ">=20.19.0"
-  }
+  "type": "commonjs"
 }

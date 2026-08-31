@@ -4,7 +4,7 @@ const setCookie = (name, value, days = 7) => {
   const date = new Date();
   date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);
   const secureFlag = isProduction ? ";secure" : "";
-  document.cookie = `${name}=${value};expires=${date.toUTCString()};path=/;samesite=strict${secureFlag}`;
+  document.cookie = `${name}=${encodeURIComponent(value)};expires=${date.toUTCString()};path=/;samesite=strict${secureFlag}`;
 };
 
 const getCookie = (name) => {

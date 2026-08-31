@@ -856,6 +856,33 @@ const createQuestion = async (questionData) => {
   return response.data;
 };
 
+const buildQuestionFormData = (questionData, file) => {
+  const formData = new FormData();
+  Object.entries(questionData).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) {
+      formData.append(key, value);
+    }
+  });
+  if (file) formData.append("file", file);
+  return formData;
+};
+
+const createQuestionWithFile = async (questionData, file) => {
+  const response = await httpPostFormData(
+    "/assistant/questions",
+    buildQuestionFormData(questionData, file),
+  );
+  return response.data;
+};
+
+const updateQuestionWithFile = async (questionId, questionData, file) => {
+  const response = await httpPutFormData(
+    `/assistant/questions/${questionId}`,
+    buildQuestionFormData(questionData, file),
+  );
+  return response.data;
+};
+
 const updateQuestion = async (questionId, questionData) => {
   const response = await httpPut(
     `/assistant/questions/${questionId}`,
@@ -907,13 +934,28 @@ const getEssayAnswersByExam = async (examId) => {
 };
 
 const gradeEssayAnswer = async (answerId, isCorrect) => {
-  const response = await httpPut(
-    `/assistant/student-answers/${answerId}/grade`,
-    {
-      is_correct: isCorrect,
-    },
-  );
-  return response.data;
+  // الباك إند ممكن يتوقع is_correct بأشكال مختلفة حسب الـ validation
+  // بنجرّب بالترتيب: boolean -> رقم 1/0 -> نص "1"/"0"
+  const attempts = [
+    { is_correct: Boolean(isCorrect) },
+    { is_correct: isCorrect ? 1 : 0 },
+    { is_correct: isCorrect ? "1" : "0" },
+  ];
+  let lastError;
+  for (const body of attempts) {
+    try {
+      const response = await httpPut(
+        `/assistant/student-answers/${answerId}/grade`,
+        body,
+      );
+      return response.data;
+    } catch (error) {
+      lastError = error;
+      // لو الخطأ مش مشكلة في شكل البيانات (400) نرميه فوراً
+      if (error.status && error.status !== 400) throw error;
+    }
+  }
+  throw lastError;
 };
 
 const getStudentExams = async (examId) => {
@@ -1328,7 +1370,9 @@ export {
   getQuestionById,
   downloadQuestionFile,
   createQuestion,
+  createQuestionWithFile,
   updateQuestion,
+  updateQuestionWithFile,
   deleteQuestion,
   getOptionsByQuestion,
   getOptionById,

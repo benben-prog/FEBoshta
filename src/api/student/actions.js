@@ -164,67 +164,87 @@ const fetchOnlineExamById = async (attemptId) => {
   }
 };
 
-const startStudentExam = async (examId) => {
+// Check active attempt
+const checkExamAttempt = async (examId) => {
   try {
-    const attempt = await studentServices.startExam(examId);
-    
-    if (!attempt || !attempt.id) {
-      throw new Error("فشل بدء الامتحان");
-    }
-
-    const questions = await studentServices.getQuestionsByExam(examId);
-
-    const questionsWithOptions = await Promise.all(
-      questions.map(async (question) => {
-        const options = await studentServices.getOptionsByQuestion(question.id);
-        return { ...question, options };
-      }),
-    );
-
-    return {
-      success: true,
-      data: {
-        attempt_id: attempt.id,
-        exam_id: attempt.exam_id,
-        started_at: attempt.started_at,
-        questions: questionsWithOptions,
-      },
-    };
+    const data = await studentServices.checkExamAttempt(examId);
+    return { success: true, data };
   } catch (error) {
     return { success: false, error: error.message };
   }
 };
 
-const submitStudentExam = async (attemptId, answers) => {
+// Resume exam
+const resumeStudentExam = async (examId) => {
   try {
-    let correctCount = 0;
-    let totalQuestions = 0;
+    const data = await studentServices.resumeExam(examId);
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
 
-    for (const answer of answers) {
-      const question = await studentServices.getQuestionById(answer.question_id);
-      
-      if (question.type === "mcq" || question.type === "true_false") {
-        totalQuestions++;
-        const options = await studentServices.getOptionsByQuestion(question.id);
-        const correctOption = options.find((opt) => opt.is_correct === 1);
-        
-        if (correctOption && correctOption.id === answer.option_id) {
-          correctCount++;
-        }
-      }
-    }
+// Start exam
+const startStudentExam = async (examId) => {
+  try {
+    const data = await studentServices.startExam(examId);
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
 
-    const score = totalQuestions > 0 ? (correctCount / totalQuestions) * 100 : 0;
-
-    const result = await studentServices.submitExam(attemptId, Math.round(score));
-
+// Submit exam - no score
+const submitStudentExam = async (attemptId) => {
+  try {
+    const result = await studentServices.submitExam(attemptId);
     return { success: true, data: result };
   } catch (error) {
     return { success: false, error: error.message };
   }
 };
 
+// Get exam questions with options
+const fetchExamQuestions = async (examId) => {
+  try {
+    const data = await studentServices.getExamQuestions(examId);
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
 
+// Get single question with options
+const fetchQuestionById = async (questionId) => {
+  try {
+    const data = await studentServices.getQuestionById(questionId);
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+// Download question file
+const downloadQuestionFile = async (questionId) => {
+  try {
+    const data = await studentServices.downloadQuestionFile(questionId);
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+// Get options for question
+const fetchOptionsByQuestion = async (questionId) => {
+  try {
+    const data = await studentServices.getOptionsByQuestion(questionId);
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+// Answer MCQ/True-False question
 const submitStudentAnswer = async (examId, questionId, selectedOptionId) => {
   try {
     const data = await studentServices.answerQuestion(
@@ -238,6 +258,7 @@ const submitStudentAnswer = async (examId, questionId, selectedOptionId) => {
   }
 };
 
+// Submit essay answer
 const submitStudentEssayAnswer = async (examId, questionId, file) => {
   try {
     const data = await studentServices.submitEssayAnswer(
@@ -317,6 +338,16 @@ const fetchSubmissions = async (month = "", page = 1) => {
   }
 };
 
+// Download own submission file
+const downloadSubmissionFile = async (assignmentId) => {
+  try {
+    const data = await studentServices.downloadSubmissionFile(assignmentId);
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
 // Videos & Playlists
 const fetchPlaylists = async () => {
   try {
@@ -367,11 +398,20 @@ const fetchCurrentSubscription = async () => {
     return { success: false, error: error.message };
   }
 };
-
+// Get exam review
+const fetchExamReview = async (attemptId) => {
+  try {
+    const data = await studentServices.getExamReview(attemptId);
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
 export {
   fetchStudentDashboard,
   fetchStudentProfile,
   fetchStudentStats,
+  fetchExamReview,
   updateStudentProfileImage,
   deleteStudentProfileImage,
   changeStudentPassword,
@@ -384,8 +424,14 @@ export {
   fetchAvailableExams,
   fetchExamHistory,
   fetchOnlineExamById,
+  checkExamAttempt,
+  resumeStudentExam,
   startStudentExam,
   submitStudentExam,
+  fetchExamQuestions,
+  fetchQuestionById,
+  downloadQuestionFile,
+  fetchOptionsByQuestion,
   submitStudentAnswer,
   submitStudentEssayAnswer,
   fetchAssignments,
@@ -394,6 +440,7 @@ export {
   submitStudentAssignment,
   updateStudentAssignment,
   fetchSubmissions,
+  downloadSubmissionFile,
   fetchPlaylists,
   fetchPlaylistVideos,
   fetchPaymentHistory,

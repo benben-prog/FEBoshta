@@ -1,3 +1,4 @@
+import { notifyError, notifySuccess, notifyInfo, confirmToast } from "../../lib/notify";
 import {
   FileText,
   Plus,
@@ -35,7 +36,12 @@ const Homeworks = () => {
   const [grades, setGrades] = useState([]);
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState(null);
+  /* كل الرسائل toast */
+  const setMessage = (msg) => {
+    if (!msg?.text) return;
+    if (msg.type === "success") notifySuccess(msg.text);
+    else notifyError(msg.text);
+  };
   const [modal, setModal] = useState(false);
   const [editingAssignment, setEditingAssignment] = useState(null);
 
@@ -97,7 +103,7 @@ const Homeworks = () => {
   };
 
   const handleDelete = async (assignmentId) => {
-    if (confirm("حذف هذا الواجب؟")) {
+    confirmToast("حذف هذا الواجب؟", async () => {
       const result = await removeAssignment(assignmentId);
       if (result.success) {
         setMessage({ type: "success", text: "تم حذف الواجب" });
@@ -105,7 +111,7 @@ const Homeworks = () => {
       } else {
         setMessage({ type: "error", text: result.error });
       }
-    }
+    });
   };
 
   const handleEdit = async (assignment) => {
@@ -231,17 +237,6 @@ const Homeworks = () => {
         </button>
       </header>
 
-      {message && (
-        <div
-          className={`w-full p-3 rounded-lg text-sm font-bold ${
-            message.type === "success"
-              ? "bg-green-50 text-green-700 border border-green-200"
-              : "bg-red-50 text-red-700 border border-red-200"
-          }`}
-        >
-          {message.text}
-        </div>
-      )}
 
       {assignments.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
@@ -466,7 +461,7 @@ const Homeworks = () => {
                               <button
                                 onClick={() => {
                                   window.open(
-                                    `https://jupiter-learn-backend.vercel.app/${submission.file_path}`,
+                                    `https://backend.benb3n.cloud/${submission.file_path}`,
                                     "_blank",
                                   );
                                 }}
@@ -560,7 +555,21 @@ const Homeworks = () => {
                 <input
                   type="number"
                   value={score}
-                  onChange={(e) => setScore(e.target.value)}
+                 onChange={(e) => {
+                      const value = e.target.value;
+                      const maxMark = parseFloat(selectedAssignment?.full_mark);
+                      
+                      if (value === "") {
+                        setScore("");
+                        return;
+                      }
+                      
+                      const numValue = parseFloat(value);
+                      
+                      if (!isNaN(numValue) && numValue >= 0 && numValue <= maxMark) {
+                        setScore(value);
+                      }
+                    }}
                   min="0"
                   max={selectedAssignment?.full_mark || 10}
                   className="w-full p-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:border-[#009966]"
@@ -583,7 +592,7 @@ const Homeworks = () => {
                 <button
                   onClick={() => {
                     window.open(
-                      `https://jupiter-learn-backend.vercel.app/${gradingSubmission.file_path}`,
+                      `https://backend.benb3n.cloud/${gradingSubmission.file_path}`,
                       "_blank",
                     );
                   }}

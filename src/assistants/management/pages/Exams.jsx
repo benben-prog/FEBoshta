@@ -39,7 +39,9 @@ import {
   fetchExamResultStats,
 } from "../../../api/assistant/actions";
 import { LoadingState } from "../components/Spinner";
-import { toast } from "sonner";
+import { toast, notifyError, notifySuccess, confirmToast } from "../../../lib/notify";
+import { useApiQuery, useApiList, useInvalidate } from "../../../hooks/useApiQuery";
+import { qk } from "../../../api/queryKeys";
 
 const PAGE_SIZE = 10;
 
@@ -349,21 +351,16 @@ const ExamRow = memo(function ExamRow({
 
 const Exams = () => {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [exams, setExams] = useState([]);
-  const [grades, setGrades] = useState([]);
-  const [groups, setGroups] = useState([]);
-  const [error, setError] = useState(null);
-  const [successMessage, setSuccessMessage] = useState(null);
+  /* كل الرسائل toast */
+  const setError = (message) => { if (message) notifyError(message); };
+  const setSuccessMessage = (message) => { if (message) notifySuccess(message); };
+  const invalidate = useInvalidate();
 
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [isEditing, setIsEditing] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [totalExams, setTotalExams] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // فلاتر
@@ -380,114 +377,61 @@ const Exams = () => {
   // ✅ أخطاء الفورم
   const [formErrors, setFormErrors] = useState({});
 
-  const loadData = useCallback(
-    async (showRefresh = false) => {
-      if (showRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-      setError(null);
-      try {
-        const [examsResult, gradesResult, groupsResult] = await Promise.all([
-          fetchAllExams(page),
-          fetchAllGrades(),
-          fetchAllGroups(),
-        ]);
+  /* الفلاتر جزء من مفتاح الكاش: كل فلتر بيتحمل مرة واحدة وبعدها من الكاش */
+  const [gradeFilterKey, groupFilterKey] = [gradeFilter, groupFilter];
 
-        if (examsResult.success) {
-          const data = Array.isArray(examsResult.data) ? examsResult.data : [];
-          setExams(data);
-          setTotalExams(examsResult.pagination?.total || data.length);
-          setTotalPages(examsResult.pagination?.totalPages || 1);
-        } else {
-          setError(examsResult.error || "حدث خطأ في تحميل الامتحانات");
-        }
-
-        if (gradesResult.success) {
-          const data = Array.isArray(gradesResult.data)
-            ? gradesResult.data
-            : [];
-          setGrades(data.filter((g) => g.name && g.name.trim() !== ""));
-        }
-
-        if (groupsResult.success) {
-          const data = Array.isArray(groupsResult.data)
-            ? groupsResult.data
-            : [];
-          setGroups(
-            data.filter((g) => g.deleted === 0 || g.deleted === undefined),
-          );
-        }
-      } catch (error) {
-        console.error("Error loading data:", error);
-        setError("حدث خطأ في تحميل البيانات");
-        toast.error("حدث خطأ في تحميل البيانات");
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
+  const examsQuery = useApiQuery(
+    groupFilterKey
+      ? qk.exams.byGroup(groupFilterKey)
+      : gradeFilterKey
+        ? qk.exams.byGrade(gradeFilterKey)
+        : ["exams", "page", page],
+    () =>
+      groupFilterKey
+        ? fetchExamsByGroup(groupFilterKey)
+        : gradeFilterKey
+          ? fetchExamsByGrade(gradeFilterKey)
+          : fetchAllExams(page),
+    {
+      fallback: [],
+      select: (data) => (Array.isArray(data) ? data : []),
+      errorMessage: "حدث خطأ في تحميل الامتحانات",
     },
-    [page],
   );
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  const gradesQuery = useApiList(qk.grades.all, fetchAllGrades, {
+    select: (data) => (Array.isArray(data) ? data : []).filter((g) => g?.name && g.name.trim() !== ""),
+    showErrorToast: false,
+  });
+  const groupsQuery = useApiList(qk.groups.all, fetchAllGroups, {
+    select: (data) => (Array.isArray(data) ? data : []).filter((g) => g?.deleted === 0 || g?.deleted === undefined),
+    showErrorToast: false,
+  });
 
-  const handleRefresh = () => {
-    loadData(true);
-  };
+  const exams = examsQuery.data ?? [];
+  const grades = gradesQuery.data ?? [];
+  const groups = groupsQuery.data ?? [];
+  const loading = examsQuery.isLoading;
+  const refreshing = examsQuery.isFetching && !examsQuery.isLoading;
 
-  const handleGradeFilterChange = async (gradeId) => {
+  const isFiltered = !!(gradeFilterKey || groupFilterKey);
+  const totalExams = isFiltered ? exams.length : (examsQuery.pagination?.total ?? exams.length);
+  const totalPages = isFiltered
+    ? Math.max(1, Math.ceil(exams.length / PAGE_SIZE))
+    : (examsQuery.pagination?.totalPages ?? 1);
+
+  const loadData = () => invalidate(["exams"], qk.assistant.dashboard);
+  const handleRefresh = () => loadData();
+
+  const handleGradeFilterChange = (gradeId) => {
     setGradeFilter(gradeId);
     setGroupFilter("");
     setPage(1);
-
-    if (gradeId) {
-      setLoading(true);
-      try {
-        const result = await fetchExamsByGrade(gradeId);
-        if (result.success) {
-          const data = Array.isArray(result.data) ? result.data : [];
-          setExams(data);
-          setTotalExams(data.length);
-          setTotalPages(Math.ceil(data.length / PAGE_SIZE));
-        }
-      } catch (error) {
-        console.error("Error fetching exams by grade:", error);
-      } finally {
-        setLoading(false);
-      }
-    } else {
-      loadData();
-    }
   };
 
-  const handleGroupFilterChange = async (groupId) => {
+  const handleGroupFilterChange = (groupId) => {
     setGroupFilter(groupId);
     setPage(1);
-
-    if (groupId) {
-      setLoading(true);
-      try {
-        const result = await fetchExamsByGroup(groupId);
-        if (result.success) {
-          const data = Array.isArray(result.data) ? result.data : [];
-          setExams(data);
-          setTotalExams(data.length);
-          setTotalPages(Math.ceil(data.length / PAGE_SIZE));
-        }
-      } catch (error) {
-        console.error("Error fetching exams by group:", error);
-      } finally {
-        setLoading(false);
-      }
-    } else if (gradeFilter) {
-      handleGradeFilterChange(gradeFilter);
-    } else {
-      loadData();
-    }
   };
 
   // ✅ عرض الإحصائيات
@@ -593,7 +537,11 @@ const Exams = () => {
   };
 
   const handleDelete = async (exam) => {
-    if (!confirm(`هل أنت متأكد من حذف امتحان "${exam.title}"؟`)) return;
+    const confirmed = await new Promise((resolve) => {
+      confirmToast(`هل أنت متأكد من حذف امتحان "${exam.title}"؟`, () => resolve(true), "حذف");
+      setTimeout(() => resolve(false), 8500);
+    });
+    if (!confirmed) return;
 
     try {
       const result = await removeExam(exam.id);
@@ -675,10 +623,6 @@ const Exams = () => {
     };
   }, [filteredExams]);
 
-  if (loading && !exams.length) {
-    return <LoadingState label="جاري تحميل الامتحانات..." />;
-  }
-
   return (
     <motion.section
       initial={{ opacity: 0 }}
@@ -686,20 +630,6 @@ const Exams = () => {
       transition={{ duration: 0.5 }}
       className="min-h-screen"
     >
-      {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl flex items-center justify-between">
-          <span className="flex items-center gap-2">
-            <AlertTriangle size={18} />
-            {error}
-          </span>
-          <button
-            onClick={() => setError(null)}
-            className="text-red-500 hover:text-red-700"
-          >
-            ✕
-          </button>
-        </div>
-      )}
 
       {/* Header */}
       <motion.header
@@ -862,7 +792,13 @@ const Exams = () => {
 
         {/* Table */}
         <div className="max-h-[500px] overflow-x-auto overflow-y-auto custom-scrollbar">
-          {filteredExams.length === 0 ? (
+          {loading ? (
+            <div className="p-6 space-y-3">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <div key={i} className="h-14 rounded-xl bg-gray-100 animate-pulse" />
+              ))}
+            </div>
+          ) : filteredExams.length === 0 ? (
             <div className="text-center py-16">
               <div className="flex flex-col items-center gap-3">
                 <BookOpen size={48} className="text-gray-300" />

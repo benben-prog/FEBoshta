@@ -5,7 +5,7 @@ import { TbMath } from "react-icons/tb";
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { User, UserRoundPen, UsersRound } from "lucide-react";
+import { Eye, EyeOff, User, UserRoundPen, UsersRound } from "lucide-react";
 
 // Assets
 import theMister from "../assets/the-mister.png";
@@ -34,11 +34,12 @@ const Badge = ({ title, subtitle, style, rotate = "0" }) => (
 const Login = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const [role, setRole] = useState(searchParams.get("role") || "الطالب"); // ✅ تعديل
+  const [role, setRole] = useState(searchParams.get("role") || "الطالب");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [showPasswords, setShowPasswords] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -46,9 +47,9 @@ const Login = () => {
     setError(null);
 
     const roleMap = {
-      الطالب: "student", // ✅ تعديل
-      المعلم: "teacher", // ✅ تعديل
-      المساعد: "assistant", // ✅ تعديل
+      الطالب: "student",
+      المعلم: "teacher",
+      المساعد: "assistant",
     };
 
     try {
@@ -192,15 +193,24 @@ const Login = () => {
                 >
                   كلمة السر
                 </label>
-                <input
-                  id="password"
-                  placeholder="ادخل كلمة السر"
-                  className="w-full rounded-xl border px-4 py-3 text-sm transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[#1a5d1a] focus:border-transparent"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
+                <div className="w-full relative">
+                  <input
+                    id="password"
+                    placeholder="ادخل كلمة السر"
+                    className="w-full rounded-xl border px-4 py-3 text-sm transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[#1a5d1a] focus:border-transparent"
+                    type={showPasswords ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPasswords(!showPasswords)}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {showPasswords ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
               </div>
 
               {/* Submit */}
@@ -291,15 +301,6 @@ const Login = () => {
             </motion.div>
           </div>
         </main>
-
-        {/* Footer */}
-        <footer className="shrink-0 flex justify-end items-center px-6 sm:px-10 py-6 sm:py-10 mt-auto">
-          <div className="ml-4 sm:ml-40">
-            <p className="text-[#1a5d1a] text-xl sm:text-2xl font-bold font-lalezar">
-              <span className="text-white">منصة</span> أ / محمد بشته
-            </p>
-          </div>
-        </footer>
       </section>
     </>
   );

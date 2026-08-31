@@ -10,7 +10,6 @@ export async function downloadExcelTemplate(filename, headers, sampleRow) {
   XLSX.writeFile(wb, filename);
 }
 
-/* تصدير مصفوفة صفوف (Array of Arrays) لملف إكسيل */
 export async function exportAoaExcel(filename, sheetName, aoa) {
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   const wb = XLSX.utils.book_new();

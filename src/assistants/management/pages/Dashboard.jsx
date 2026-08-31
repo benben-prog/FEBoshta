@@ -1,11 +1,14 @@
 import { CalendarCheck2, DownloadCloud, TriangleAlert, UsersRound, UserX, TrendingUp, Activity, Clock, Award, Zap, CheckCircle, Wallet, GraduationCap, Users, BookOpen, Video, ListVideo, CreditCard, DollarSign } from "lucide-react";
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { AreaChart, Area, PieChart, Pie, Cell, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import {
     fetchAssistantDashboard,
-    fetchActivityLog
+    fetchActivityLog,
+    fetchAttendanceDashboard
 } from "../../../api/assistant/actions";
+import { useApiQuery, useInvalidate } from "../../../hooks/useApiQuery";
+import { qk } from "../../../api/queryKeys";
 
 const ARABIC_MONTHS = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
 
@@ -115,49 +118,38 @@ function translateAction(action) {
 }
 
 const Dashboard = () => {
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [dashboardData, setDashboardData] = useState(null);
-    const [activityLog, setActivityLog] = useState([]);
-    const [pagination, setPagination] = useState(null);
-    const [isFetching, setIsFetching] = useState(false);
     const [filterEntity, setFilterEntity] = useState("");
     const [filterDate, setFilterDate] = useState("");
     const [page, setPage] = useState(1);
 
-    async function loadData() {
-        setLoading(true);
-        setError(null);
-        try {
-            const [dashboardResult, activityResult] = await Promise.all([
-                fetchAssistantDashboard(),
-                fetchActivityLog(filterEntity, filterDate, page)
-            ]);
+    /* fetch مرة واحدة ويتخزن في الكاش — التحديث بيحصل بس لما الداتا تتغير */
+    const dashboardQuery = useApiQuery(qk.assistant.dashboard, fetchAssistantDashboard, {
+        errorMessage: "حدث خطأ في تحميل لوحة التحكم",
+    });
 
-            if (dashboardResult.success) {
-                setDashboardData(dashboardResult.data);
-            } else {
-                setError(dashboardResult.error || "حدث خطأ في تحميل لوحة التحكم");
-            }
+    const activityQuery = useApiQuery(
+        qk.assistant.activityLog(filterEntity, filterDate, page),
+        () => fetchActivityLog(filterEntity, filterDate, page),
+        { errorMessage: "حدث خطأ في تحميل سجل النشاط" },
+    );
 
-            if (activityResult.success) {
-                setActivityLog(Array.isArray(activityResult.data) ? activityResult.data : []);
-                setPagination(activityResult.pagination || null);
-            } else {
-                console.error("Error loading activity log:", activityResult.error);
-                setActivityLog([]);
-            }
-        } catch (error) {
-            console.error("Error loading dashboard:", error);
-            setError("حدث خطأ في تحميل البيانات");
-        } finally {
-            setLoading(false);
-        }
-    }
+    /* بيانات الحضور الحقيقية للأسبوع (مش أرقام وهمية) */
+    const attendanceQuery = useApiQuery(qk.attendance.dashboard, fetchAttendanceDashboard, {
+        showErrorToast: false,
+    });
 
-    useEffect(() => {
-        loadData();
-    }, [page, filterEntity, filterDate]);
+    const invalidate = useInvalidate();
+
+    const dashboardData = dashboardQuery.data ?? null;
+    const activityLog = useMemo(
+        () => (Array.isArray(activityQuery.data) ? activityQuery.data : []),
+        [activityQuery.data],
+    );
+    const pagination = activityQuery.pagination;
+    const isFetching = dashboardQuery.isFetching || activityQuery.isFetching;
+
+    const refreshAll = () =>
+        invalidate(qk.assistant.dashboard, ["assistant", "activity-log"], qk.attendance.dashboard);
 
     const stats = useMemo(() => {
         if (!dashboardData) return {
@@ -199,19 +191,53 @@ const Dashboard = () => {
         };
     }, [dashboardData]);
 
+    /**
+     * اتجاه الحضور الأسبوعي — من الـ API فقط.
+     * بيدور على أول مصفوفة أسبوعية موجودة في رد /attendance/dashboard أو /assistant/dashboard،
+     * ولو مفيش داتا بيرجع مصفوفة فاضية (الواجهة تبين "لا يوجد بيانات") بدل أرقام عشوائية.
+     */
     const attendanceTrend = useMemo(() => {
-        const today = new Date();
-        const days = [];
-        for (let i = 6; i >= 0; i--) {
-            const d = new Date(today);
-            d.setDate(d.getDate() - i);
-            days.push({
-                name: d.toLocaleDateString("ar-EG", { weekday: "short" }),
-                value: Math.floor(Math.random() * 50) + 30
-            });
+        const sources = [attendanceQuery.data, dashboardData];
+        const arrayKeys = [
+            "weekly_attendance", "weekly", "last_7_days", "last7days", "daily_attendance",
+            "attendance_trend", "trend", "days", "week", "attendance_by_day", "daily",
+        ];
+
+        let raw = null;
+        for (const source of sources) {
+            if (!source) continue;
+            if (Array.isArray(source)) { raw = source; break; }
+            for (const key of arrayKeys) {
+                if (Array.isArray(source[key]) && source[key].length) { raw = source[key]; break; }
+            }
+            if (raw) break;
         }
-        return days;
-    }, []);
+        if (!raw) return [];
+
+        const pickValue = (item) => {
+            const keys = ["present", "present_count", "presents", "attended", "attendance_count",
+                "count", "total_present", "total", "value", "students_present"];
+            for (const key of keys) {
+                const v = Number(item?.[key]);
+                if (Number.isFinite(v)) return v;
+            }
+            return 0;
+        };
+        const pickLabel = (item) => {
+            const raw = item?.day_name ?? item?.weekday ?? item?.day ?? item?.name ??
+                item?.label ?? item?.attendance_date ?? item?.session_date ?? item?.date;
+            if (!raw) return "";
+            const d = new Date(raw);
+            if (!Number.isNaN(d.getTime())) {
+                return d.toLocaleDateString("ar-EG", { weekday: "short", day: "numeric" });
+            }
+            return String(raw);
+        };
+
+        return raw
+            .slice(-7)
+            .map((item) => ({ name: pickLabel(item), value: pickValue(item) }));
+    }, [attendanceQuery.data, dashboardData]);
 
     const pieData = [
         { name: 'حاضر', value: stats.present },
@@ -340,17 +366,6 @@ const Dashboard = () => {
         visible: { y: 0, opacity: 1, transition: { type: "spring", stiffness: 100, damping: 12 } }
     };
 
-    if (loading) {
-        return (
-            <div className="flex items-center justify-center min-h-screen">
-                <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-                    <p className="mt-4 text-gray-500">جاري تحميل لوحة التحكم...</p>
-                </div>
-            </div>
-        );
-    }
-
     return (
         <motion.section
             initial={{ opacity: 0 }}
@@ -358,13 +373,6 @@ const Dashboard = () => {
             transition={{ duration: 0.5 }}
             className="min-h-screen"
         >
-            {error && (
-                <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl flex items-center justify-between">
-                    <span>{error}</span>
-                    <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">✕</button>
-                </div>
-            )}
-
             {/* Header with Greeting */}
             <motion.header
                 initial={{ y: -20, opacity: 0 }}
@@ -399,7 +407,7 @@ const Dashboard = () => {
                         <motion.button
                             whileHover={{ scale: 1.05 }}
                             whileTap={{ scale: 0.95 }}
-                            onClick={() => { setPage(1); loadData(); }}
+                            onClick={() => { setPage(1); refreshAll(); }}
                             disabled={isFetching}
                             className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm disabled:opacity-60"
                         >
@@ -444,7 +452,9 @@ const Dashboard = () => {
                             <div>
                                 <p className="text-sm text-gray-500 font-medium mb-1">{card.label}</p>
                                 <p className="text-3xl font-bold text-gray-800">
-                                    {card.value}
+                                    {dashboardQuery.isLoading
+                                        ? <span className="inline-block h-8 w-20 rounded bg-gray-100 animate-pulse" />
+                                        : card.value}
                                 </p>
                             </div>
                         </div>
@@ -473,7 +483,11 @@ const Dashboard = () => {
                             </div>
                             <div>
                                 <p className="text-xs text-gray-500">{card.label}</p>
-                                <p className="text-xl font-bold text-gray-800">{card.value}</p>
+                                <p className="text-xl font-bold text-gray-800">
+                                    {dashboardQuery.isLoading
+                                        ? <span className="inline-block h-6 w-12 rounded bg-gray-100 animate-pulse" />
+                                        : card.value}
+                                </p>
                             </div>
                         </div>
                     </motion.div>
@@ -502,7 +516,9 @@ const Dashboard = () => {
                             <span className="text-xs text-gray-600">عدد الحضور</span>
                         </div>
                     </div>
-                    {attendanceTrend.length === 0 || stats.present + stats.absent === 0 ? (
+                    {attendanceQuery.isLoading ? (
+                        <div className="h-[250px] rounded-2xl bg-gray-100 animate-pulse" />
+                    ) : attendanceTrend.length === 0 ? (
                         <p className="text-sm text-gray-400 text-center py-20">لا يوجد بيانات حضور كافية</p>
                     ) : (
                         <ResponsiveContainer width="100%" height={250}>
@@ -643,7 +659,13 @@ const Dashboard = () => {
                     </span>
                 </div>
 
-                {recentActivities.length === 0 ? (
+                {activityQuery.isLoading ? (
+                    <div className="space-y-3">
+                        {[0, 1, 2, 3, 4].map((i) => (
+                            <div key={i} className="h-14 rounded-xl bg-gray-100 animate-pulse" />
+                        ))}
+                    </div>
+                ) : recentActivities.length === 0 ? (
                     <p className="text-sm text-gray-500 text-center py-8">لا يوجد نشاط بعد</p>
                 ) : (
                     <div className="space-y-3 overflow-x-auto">

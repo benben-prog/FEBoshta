@@ -1,4 +1,7 @@
 import { httpGet, httpPut, httpDelete, httpPutFormData } from "../http";
+import config from "../../config";
+
+const { apiUrl } = config;
 
 const getTeacherProfile = async () => {
   const response = await httpGet("/teacher/profile");
@@ -47,7 +50,6 @@ const updateTeacherPassword = async (
   return response;
 };
 
-// Assistants
 const getAssistants = async () => {
   const response = await httpGet("/teacher/assistants");
   return response.data;
@@ -58,7 +60,6 @@ const getAssistantById = async (assistantId) => {
   return response.data;
 };
 
-// Grades
 const getGrades = async () => {
   const response = await httpGet("/teacher/grades");
   return response.data;
@@ -89,7 +90,6 @@ const getGradeStats = async (gradeId) => {
   return response.data;
 };
 
-// Groups
 const getGroups = async () => {
   const response = await httpGet("/teacher/groups");
   return response.data;
@@ -130,7 +130,6 @@ const getGroupStats = async (groupId) => {
   return response.data;
 };
 
-// Students
 const getStudents = async (
   page = 1,
   search = "",
@@ -280,7 +279,6 @@ const getStudentFullDetails = async (studentId) => {
   };
 };
 
-// Attendance
 const getAttendanceDashboard = async () => {
   const response = await httpGet("/teacher/attendance/dashboard");
   return response.data;
@@ -322,7 +320,6 @@ const getAttendanceSummary = async (groupId, date) => {
   return response.data;
 };
 
-// Payments
 const getPayments = async (
   page = 1,
   search = "",
@@ -368,7 +365,6 @@ const getGroupPaymentStats = async (groupId) => {
   return response.data;
 };
 
-// Subscriptions
 const getSubscriptionOverall = async () => {
   const response = await httpGet("/teacher/subscriptions/overall");
   return response.data;
@@ -403,7 +399,6 @@ const getStudentSubscriptions = async (studentId) => {
   return response.data;
 };
 
-// Exams
 const getExams = async () => {
   const response = await httpGet("/teacher/exams");
   return response.data;
@@ -453,7 +448,6 @@ const getExamResultStats = async (examId) => {
   return response.data;
 };
 
-// Online Exams
 const getOnlineExams = async () => {
   const response = await httpGet("/teacher/online-exams");
   return response.data;
@@ -496,7 +490,6 @@ const getOnlineExamById = async (examId) => {
   return response.data;
 };
 
-// Questions & Options
 const getQuestionsByExam = async (examId) => {
   const response = await httpGet(`/teacher/questions/exam/${examId}`);
   return response.data;
@@ -517,7 +510,6 @@ const getOptionById = async (optionId) => {
   return response.data;
 };
 
-// Student Exams
 const getStudentExams = async (examId) => {
   const response = await httpGet(`/teacher/student-exams/exam/${examId}`);
   return response.data;
@@ -556,7 +548,6 @@ const getQuestionMostSelectedOptions = async (questionId) => {
   return response.data;
 };
 
-// Assignments
 const getAssignments = async () => {
   const response = await httpGet("/teacher/assignments");
   return response.data;
@@ -612,7 +603,6 @@ const getSubmissionStats = async (assignmentId) => {
   return response.data;
 };
 
-// Videos & Playlists
 const getVideos = async () => {
   const response = await httpGet("/teacher/videos");
   return response.data;
@@ -648,6 +638,29 @@ const getPlaylistVideos = async (playlistId) => {
     `/teacher/playlist-videos/playlist/${playlistId}`,
   );
   return response.data;
+};
+
+// ============================================
+// DOWNLOAD & PREVIEW SERVICES (جديد)
+// ============================================
+
+const getDownloadUrl = (type, id) => {
+  const urls = {
+    assignment: `/teacher/assignments/${id}/download`,
+    video: `/teacher/videos/${id}/download`,
+    question: `/teacher/questions/${id}/download`,
+  };
+  return `${apiUrl}${urls[type]}`;
+};
+
+const getPreviewUrl = (type, id) => {
+  const urls = {
+    assignment: `/teacher/assignments/${id}/preview`,
+    video: `/teacher/videos/${id}/preview`,
+    question: `/teacher/questions/${id}/preview`,
+    answer: `/teacher/student-answers/${id}/preview`,
+  };
+  return `${apiUrl}${urls[type]}`;
 };
 
 export {
@@ -755,4 +768,6 @@ export {
   getPlaylistsByGrade,
   getPlaylistById,
   getPlaylistVideos,
+  getDownloadUrl,
+  getPreviewUrl,
 };

@@ -37,19 +37,49 @@ import {
 } from "../../../api/assistant/actions";
 import { exportPdfTable } from "../../../utils/office.js";
 import { ARABIC_MONTHS } from "../../../utils/helpers.js";
-import { toast } from "sonner";
+import { toast, notifyError, notifySuccess, confirmToast } from "../../../lib/notify";
+import { useApiQuery, useApiList, useInvalidate } from "../../../hooks/useApiQuery";
+import { qk } from "../../../api/queryKeys";
 
 const PAGE_SIZE = 10;
 
 const Payments = () => {
-  const [payments, setPayments] = useState([]);
-  const [students, setStudents] = useState([]);
-  const [grades, setGrades] = useState([]);
-  const [groups, setGroups] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState(null);
-  const [successMessage, setSuccessMessage] = useState(null);
+  /* كل الرسائل بقت toast */
+  const setError = (message) => { if (message) notifyError(message); };
+  const setSuccessMessage = (message) => { if (message) notifySuccess(message); };
+
+  const invalidate = useInvalidate();
+
+  /* fetch مرة واحدة + كاش — التحديث بيحصل بعد أي تعديل حقيقي بس */
+  const studentsQuery = useApiList(qk.payments.statuses, fetchStudentsPaymentStatus, { showErrorToast: false });
+  const gradesQuery = useApiList(qk.grades.all, fetchAllGrades, {
+    select: (data) => (Array.isArray(data) ? data : []).filter((g) => g?.name && g.name.trim() !== ""),
+    showErrorToast: false,
+  });
+  const groupsQuery = useApiList(qk.groups.all, fetchAllGroups, {
+    select: (data) => (Array.isArray(data) ? data : []).filter((g) => g?.deleted === 0 || g?.deleted === undefined),
+    showErrorToast: false,
+  });
+  const paymentsQuery = useApiList(qk.payments.list(1, ""), () => fetchAllPayments(1, ""), { showErrorToast: false });
+  const overallQuery = useApiQuery(qk.payments.overview, fetchPaymentOverall, {
+    showErrorToast: false,
+    fallback: {
+      total_students: 0, total_required: 0, total_paid: 0,
+      total_remaining: 0, fully_paid: 0, not_paid: 0,
+    },
+  });
+
+  const students = studentsQuery.data ?? [];
+  const grades = gradesQuery.data ?? [];
+  const groups = groupsQuery.data ?? [];
+  const payments = paymentsQuery.data ?? [];
+  const overallStats = overallQuery.data ?? {
+    total_students: 0, total_required: 0, total_paid: 0,
+    total_remaining: 0, fully_paid: 0, not_paid: 0,
+  };
+
+  const loading = studentsQuery.isLoading || paymentsQuery.isLoading;
+  const refreshing = studentsQuery.isFetching || paymentsQuery.isFetching || overallQuery.isFetching;
 
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [search, setSearch] = useState("");
@@ -70,15 +100,6 @@ const Payments = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [studentSubscriptions, setStudentSubscriptions] = useState([]);
-  const [overallStats, setOverallStats] = useState({
-    total_students: 0,
-    total_required: 0,
-    total_paid: 0,
-    total_remaining: 0,
-    fully_paid: 0,
-    not_paid: 0,
-  });
-
   // ✅ الوقت بتوقيت القاهرة (UTC+3)
   const getCurrentDateTime = () => {
     const now = new Date();
@@ -96,81 +117,11 @@ const Payments = () => {
   const currentYear = now.getFullYear();
   const currentMonthStr = `${currentYear}-${String(currentMonth).padStart(2, "0")}`;
 
-  const loadData = useCallback(
-    async (showRefresh = false) => {
-      if (showRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-      setError(null);
-      try {
-        const [
-          studentsResult,
-          gradesResult,
-          groupsResult,
-          paymentsResult,
-          statsResult,
-        ] = await Promise.all([
-          fetchStudentsPaymentStatus(),
-          fetchAllGrades(),
-          fetchAllGroups(),
-          fetchAllPayments(1, search),
-          fetchPaymentOverall(),
-        ]);
-
-        if (studentsResult.success) {
-          const data = Array.isArray(studentsResult.data)
-            ? studentsResult.data
-            : [];
-          setStudents(data);
-        } else {
-          console.error("Students API error:", studentsResult.error);
-        }
-
-        if (gradesResult.success) {
-          const data = Array.isArray(gradesResult.data)
-            ? gradesResult.data
-            : [];
-          setGrades(data.filter((g) => g.name && g.name.trim() !== ""));
-        }
-
-        if (groupsResult.success) {
-          const data = Array.isArray(groupsResult.data)
-            ? groupsResult.data
-            : [];
-          setGroups(
-            data.filter((g) => g.deleted === 0 || g.deleted === undefined),
-          );
-        }
-
-        if (paymentsResult.success) {
-          const data = Array.isArray(paymentsResult.data)
-            ? paymentsResult.data
-            : [];
-          setPayments(data);
-        }
-
-        if (statsResult.success) {
-          setOverallStats(statsResult.data);
-        }
-      } catch (error) {
-        console.error("Error loading data:", error);
-        setError("حدث خطأ في تحميل البيانات");
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    },
-    [search],
-  );
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  const loadData = () =>
+    invalidate(qk.payments.statuses, ["payments"], qk.assistant.dashboard);
 
   const handleRefresh = () => {
-    loadData(true);
+    loadData();
   };
 
   // ✅ تصدير PDF
@@ -190,14 +141,19 @@ const Payments = () => {
     ];
 
     const pdfRows = students.map(s => {
+      const isPaid = s.subscription_status === "paid";
+
+      const amount = isPaid
+        ? Number(s.paid_amount || 0)
+        : Number(s.required_amount || 0);
 
       return {
-        full_name: s.full_name || 'غير معروف',
-        grade_name: s.grade_name || 'بدون مرحلة',
-        group_name: s.group_name || 'بدون مجموعة',
-        subscription_month: s.subscription_month,
-        paid_amount: s.paid_amount,
-        subscription_status: s.subscription_status === "paid" ? "مدفوع" : "غير مدفوع"
+        full_name: s.full_name || "غير معروف",
+        grade_name: s.grade_name || "بدون مرحلة",
+        group_name: s.group_name || "بدون مجموعة",
+        subscription_month: s.subscription_month || currentMonthStr,
+        paid_amount: `${amount} ج`,
+        subscription_status: isPaid ? "مدفوع" : "غير مدفوع"
       };
     });
 
@@ -369,7 +325,11 @@ const Payments = () => {
   };
 
   const removePaymentById = async (id) => {
-    if (!confirm("هل أنت متأكد من حذف هذه الدفعة؟")) return;
+    const confirmed = await new Promise((resolve) => {
+      confirmToast("هل أنت متأكد من حذف هذه الدفعة؟", () => resolve(true), "حذف");
+      setTimeout(() => resolve(false), 8500);
+    });
+    if (!confirmed) return;
 
     setIsSubmitting(true);
     try {
@@ -486,17 +446,6 @@ const Payments = () => {
     return filteredStudents.filter((s) => s.payment_status !== "paid").length;
   }, [filteredStudents]);
 
-  if (loading && !students.length) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-4 text-gray-500">جاري تحميل المدفوعات...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <motion.section
       initial={{ opacity: 0 }}
@@ -504,26 +453,6 @@ const Payments = () => {
       transition={{ duration: 0.5 }}
       className="min-h-screen"
     >
-      {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl flex items-center justify-between">
-          <span className="flex items-center gap-2">
-            <AlertCircle size={18} />
-            {error}
-          </span>
-          <button
-            onClick={() => setError(null)}
-            className="text-red-500 hover:text-red-700"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-      {successMessage && (
-        <div className="mb-4 p-4 bg-green-50 border border-green-200 text-green-700 rounded-xl flex items-center gap-2">
-          <CheckCircle2 size={18} />
-          {successMessage}
-        </div>
-      )}
 
       {/* Header */}
       <motion.header
@@ -721,7 +650,13 @@ const Payments = () => {
             <div className="max-h-[450px] overflow-y-auto custom-scrollbar">
               <div className="p-2 space-y-1">
                 <AnimatePresence>
-                  {paginatedStudents.length === 0 ? (
+                  {loading ? (
+                    <div className="space-y-3">
+                      {[0, 1, 2, 3, 4, 5].map((i) => (
+                        <div key={i} className="h-16 rounded-xl bg-gray-100 animate-pulse" />
+                      ))}
+                    </div>
+                  ) : paginatedStudents.length === 0 ? (
                     <div className="text-center py-12">
                       <Users size={40} className="text-gray-300 mx-auto mb-2" />
                       <p className="text-gray-400 text-sm">
@@ -748,16 +683,16 @@ const Payments = () => {
                           whileTap={{ scale: 0.98 }}
                           onClick={() => selectStudent(student)}
                           className={`w-full text-right px-4 py-3 rounded-xl transition-all duration-200 ${isSelected
-                              ? "bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-400 shadow-md"
-                              : "hover:bg-gray-50 border-2 border-transparent"
+                            ? "bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-400 shadow-md"
+                            : "hover:bg-gray-50 border-2 border-transparent"
                             }`}
                         >
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                               <div
                                 className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold ${isPaid
-                                    ? "bg-gradient-to-r from-green-400 to-green-600"
-                                    : "bg-gradient-to-r from-gray-400 to-gray-600"
+                                  ? "bg-gradient-to-r from-green-400 to-green-600"
+                                  : "bg-gradient-to-r from-gray-400 to-gray-600"
                                   }`}
                               >
                                 {student.full_name?.charAt(0) || "?"}
@@ -822,8 +757,8 @@ const Payments = () => {
                         key={pageNum}
                         onClick={() => setPage(pageNum)}
                         className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${page === pageNum
-                            ? "bg-primary text-white shadow-md"
-                            : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-100"
+                          ? "bg-primary text-white shadow-md"
+                          : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-100"
                           }`}
                       >
                         {pageNum}
@@ -908,8 +843,8 @@ const Payments = () => {
                         <span
                           key={sub.id}
                           className={`px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1 ${sub.status === "paid"
-                              ? "bg-green-100 text-green-700"
-                              : "bg-yellow-100 text-yellow-700"
+                            ? "bg-green-100 text-green-700"
+                            : "bg-yellow-100 text-yellow-700"
                             }`}
                         >
                           {sub.month} - {sub.required_amount} ج
@@ -1062,8 +997,8 @@ const Payments = () => {
                                 animate={{ opacity: 1, x: 0 }}
                                 transition={{ delay: index * 0.05 }}
                                 className={`hover:bg-green-50/40 transition-all duration-200 ${payment.id === p.id
-                                    ? "bg-amber-50 border-r-4 border-r-amber-400"
-                                    : ""
+                                  ? "bg-amber-50 border-r-4 border-r-amber-400"
+                                  : ""
                                   }`}
                               >
                                 <td className="px-3 py-3 text-sm text-gray-600">

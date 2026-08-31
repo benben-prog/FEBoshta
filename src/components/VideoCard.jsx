@@ -32,7 +32,7 @@ const VideoCard = ({
   const getThumbnailUrl = (thumbnailPath) => {
     if (!thumbnailPath) return null;
     if (thumbnailPath.startsWith("http")) return thumbnailPath;
-    return `https://jupiter-learn-backend.vercel.app/${thumbnailPath}`;
+    return `https://backend.benb3n.cloud/${thumbnailPath}`;
   };
 
   const thumbnailUrl = video.thumbnail_url

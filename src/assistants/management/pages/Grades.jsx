@@ -1,139 +1,186 @@
-import { Download, FileText, GraduationCap, Upload, Plus, Users, Edit, Trash, RotateCcw, School, DollarSign, TrendingUp, Award } from "lucide-react";
+import {
+    Download,
+    FileText,
+    GraduationCap,
+    Upload,
+    Plus,
+    Users,
+    Edit,
+    Trash,
+    RotateCcw,
+    School,
+    DollarSign,
+    TrendingUp,
+    Award,
+} from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useApiList, useApiMutation } from "../../../hooks/useApiQuery";
+import { qk } from "../../../api/queryKeys";
+import { notifyError, notifySuccess, confirmToast, toast } from "../../../lib/notify";
+import { downloadExcelTemplate, pickExcelFile, exportPdfTable } from "../../../utils/office"
 import {
     fetchAllGrades,
     createNewGrade,
     updateGradeInfo,
-    removeGrade
+    removeGrade,
 } from "../../../api/assistant/actions";
 
 const Grades = () => {
-    const [grades, setGrades] = useState([]);
     const [grade, setGrade] = useState({
         id: "",
         name: "",
         monthlyPrice: "",
     });
     const [isEditing, setIsEditing] = useState(false);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [successMessage, setSuccessMessage] = useState(null);
+    const [importing, setImporting] = useState(false);
+    const [progress, setProgress] = useState({ done: 0, total: 0 });
 
-    const handleDownloadTemplate = () => { };
-    const handleImportExcel = () => { };
-    const handleExportPdf = () => { };
+
+    /* fetch مرة واحدة + كاش مشترك مع باقي الصفحات */
+    const gradesQuery = useApiList(qk.grades.all, fetchAllGrades, {
+        select: (data) => (Array.isArray(data) ? data : []).filter((item) => item?.name && item.name.trim() !== ""),
+        errorMessage: "حدث خطأ في تحميل البيانات",
+    });
+    const grades = gradesQuery.data ?? [];
+    const loading = gradesQuery.isLoading;
+
+    const handleDownloadTemplate = () => {
+        const headers = ['المصاريف الشهرية', 'اسم الصف'];
+        const sampleRow = ['200', 'مثال: الصف الاول الثانوي'];
+        downloadExcelTemplate('قالب_الصفوف.xlsx', headers, sampleRow);
+    };
+    const handleImportExcel = async () => {
+        try {
+            const rows = await pickExcelFile();
+            if (!rows) return;
+            if (!rows.length) return notifyError("الملف فارغ");
+
+            setImporting(true);
+
+            const norm = (v) => String(v ?? "").trim();
+            let ok = 0;
+            const errors = [];
+            setProgress({ done: 0, total: rows.length });
+
+            for (let i = 0; i < rows.length; i++) {
+                const r = rows[i];
+                const line = i + 2;
+                setProgress({ done: i, total: rows.length });
+
+
+                const name = norm(r["اسم الصف"]);
+                const price = Number(norm(r["المصاريف الشهرية"]));
+
+                if (!name) { errors.push(`صف ${line}: اسم الصف ناقص`); continue; }
+                if (!price || price <= 0) { errors.push(`صف ${line}: المصاريف الشهرية غير صحيحة`); continue; }
+                if (grades.some((g) => norm(g.name) === name)) { errors.push(`صف ${line}: الصف "${name}" موجود بالفعل`); continue; }
+
+                try {
+                    const res = await createNewGrade({ name, monthlyPrice: price });
+                    if (res?.success === false) errors.push(`صف ${line}: ${res?.message || "فشل الحفظ"}`);
+                    else ok++;
+                } catch (e) {
+                    errors.push(`صف ${line}: ${e?.message || "فشل الحفظ"}`);
+                }
+            }
+
+            setProgress({ done: rows.length, total: rows.length });
+
+            await gradesQuery.refetch();
+
+            if (ok) notifySuccess(`تم إضافة ${ok} صف بنجاح`);
+            if (errors.length) {
+                notifyError(`فشل ${errors.length} صف`);
+                console.warn("Excel import errors:", errors);
+            }
+        } catch (e) {
+            notifyError(e?.message || "حدث خطأ أثناء رفع الملف");
+        } finally {
+            setImporting(false);
+            setProgress({ done: 0, total: 0 });
+        }
+    };
+
+    const handleExportPdf = () => {
+        if (!grades.length) {
+            toast.error('لا يوجد صفوف لتصديرها');
+            return;
+        }
+
+        const columns = [
+            { header: 'الصف', key: 'name' },
+            { header: 'المصاريف الشهرية (ج)', key: 'monthly_price' }
+        ];
+
+        const pdfRows = grades.map(g => ({
+            name: g.name,
+            monthly_price: `${g.monthly_price} ج`
+        }));
+
+        const today = new Date();
+        const dateStr = today.toISOString().split('T')[0];
+        const fileName = `كشف_الصفوف_${dateStr}.pdf`;
+
+        exportPdfTable(
+            fileName,
+            'كشف الصفوف الدراسية والمصاريف',
+            columns,
+            pdfRows
+        );
+    };
 
     const calculateStats = (gradesData) => {
-        const prices = gradesData?.map(g => Number(g.monthly_price) || 0) || [];
-        const validPrices = prices.filter(p => p > 0);
+        const prices = gradesData?.map((g) => Number(g.monthly_price) || 0) || [];
+        const validPrices = prices.filter((p) => p > 0);
 
         return {
             total: gradesData?.length || 0,
-            avgPrice: validPrices.length > 0 ? Math.round(validPrices.reduce((a, b) => a + b, 0) / validPrices.length) : 0,
+            avgPrice:
+                validPrices.length > 0
+                    ? Math.round(
+                        validPrices.reduce((a, b) => a + b, 0) / validPrices.length,
+                    )
+                    : 0,
             maxPrice: validPrices.length > 0 ? Math.max(...validPrices) : 0,
             minPrice: validPrices.length > 0 ? Math.min(...validPrices) : 0,
         };
     };
 
-    async function loadGrades() {
-        setLoading(true);
-        setError(null);
-        try {
-            const result = await fetchAllGrades();
-
-            if (result.success) {
-                const data = Array.isArray(result.data) ? result.data : [];
-                const filteredData = data.filter(item => item.name && item.name.trim() !== "");
-                setGrades(filteredData);
-            } else {
-                setError(result.error || "حدث خطأ في تحميل البيانات");
-                setGrades([]);
-            }
-        } catch (error) {
-            console.error("Error loading grades:", error);
-            setError("حدث خطأ في تحميل البيانات");
-            setGrades([]);
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    useEffect(() => {
-        loadGrades();
-    }, []);
-
     const stats = calculateStats(grades);
 
-    async function saveGrade() {
-        setError(null);
-        setSuccessMessage(null);
+    const saveMutation = useApiMutation(
+        ({ id, payload }) => (id ? updateGradeInfo(id, payload) : createNewGrade(payload)),
+        {
+            invalidateKeys: [qk.grades.all, qk.assistant.dashboard],
+            errorMessage: "حدث خطأ في حفظ البيانات",
+            onSuccess: (_d, variables) => {
+                notifySuccess(variables.id ? "تم تحديث الصف بنجاح" : "تم إضافة الصف بنجاح");
+                setIsEditing(false);
+                setGrade({ id: "", name: "", monthlyPrice: "" });
+            },
+        },
+    );
 
-        if (!grade.name || grade.name.trim() === "") {
-            setError("يرجى إدخال اسم الصف");
-            return;
-        }
+    const deleteMutation = useApiMutation((id) => removeGrade(id), {
+        invalidateKeys: [qk.grades.all, qk.assistant.dashboard],
+        successMessage: "تم حذف الصف بنجاح",
+        errorMessage: "حدث خطأ في حذف الصف",
+    });
 
-        if (!grade.monthlyPrice || Number(grade.monthlyPrice) <= 0) {
-            setError("يرجى إدخال المصاريف الشهرية");
-            return;
-        }
+    function saveGrade() {
+        if (!grade.name || grade.name.trim() === "") return notifyError("يرجى إدخال اسم الصف");
+        if (!grade.monthlyPrice || Number(grade.monthlyPrice) <= 0) return notifyError("يرجى إدخال المصاريف الشهرية");
 
-        try {
-            const gradeData = {
-                name: grade.name.trim(),
-                monthlyPrice: Number(grade.monthlyPrice)
-            };
-
-            let result;
-            if (isEditing && grade.id) {
-                result = await updateGradeInfo(grade.id, gradeData);
-                if (result.success) {
-                    setSuccessMessage("تم تحديث الصف بنجاح");
-                    await loadGrades();
-                }
-            } else {
-                result = await createNewGrade(gradeData);
-                if (result.success) {
-                    setSuccessMessage("تم إضافة الصف بنجاح");
-                    await loadGrades();
-                }
-            }
-
-            if (!result?.success) {
-                setError(result?.error || "حدث خطأ في حفظ البيانات");
-            }
-        } catch (error) {
-            console.error("Error saving grade:", error);
-            setError(error.message || "حدث خطأ في حفظ البيانات");
-        }
-
-        setIsEditing(false);
-        setGrade({ id: "", name: "", monthlyPrice: "" });
-        setTimeout(() => setSuccessMessage(null), 3000);
+        saveMutation.mutate({
+            id: isEditing && grade.id ? grade.id : null,
+            payload: { name: grade.name.trim(), monthlyPrice: Number(grade.monthlyPrice) },
+        });
     }
 
-    async function removeGradeById(id) {
+    function removeGradeById(id) {
         if (!id) return;
-
-        if (!confirm("هل أنت متأكد من حذف هذا الصف؟")) return;
-
-        setError(null);
-        setSuccessMessage(null);
-
-        try {
-            const result = await removeGrade(id);
-            if (result.success) {
-                setSuccessMessage("تم حذف الصف بنجاح");
-                await loadGrades();
-                setTimeout(() => setSuccessMessage(null), 3000);
-            } else {
-                setError(result.error || "حدث خطأ في حذف الصف");
-            }
-        } catch (error) {
-            console.error("Error deleting grade:", error);
-            setError("حدث خطأ في حذف الصف");
-        }
+        confirmToast("هل أنت متأكد من حذف هذا الصف؟", () => deleteMutation.mutate(id), "حذف");
     }
 
     function editGrade(gradeData) {
@@ -150,9 +197,9 @@ const Grades = () => {
         visible: {
             opacity: 1,
             transition: {
-                staggerChildren: 0.1
-            }
-        }
+                staggerChildren: 0.1,
+            },
+        },
     };
 
     const itemVariants = {
@@ -163,9 +210,9 @@ const Grades = () => {
             transition: {
                 type: "spring",
                 stiffness: 100,
-                damping: 12
-            }
-        }
+                damping: 12,
+            },
+        },
     };
 
     const rowVariants = {
@@ -176,21 +223,10 @@ const Grades = () => {
             transition: {
                 type: "spring",
                 stiffness: 100,
-                damping: 15
-            }
-        }
+                damping: 15,
+            },
+        },
     };
-
-    if (loading) {
-        return (
-            <div className="flex items-center justify-center min-h-screen">
-                <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-                    <p className="mt-4 text-gray-500">جاري تحميل الصفوف...</p>
-                </div>
-            </div>
-        );
-    }
 
     return (
         <motion.section
@@ -199,23 +235,6 @@ const Grades = () => {
             transition={{ duration: 0.5 }}
             className="min-h-screen"
         >
-            {error && (
-                <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl flex items-center justify-between">
-                    <span>{error}</span>
-                    <button
-                        onClick={() => setError(null)}
-                        className="text-red-500 hover:text-red-700"
-                    >
-                        ✕
-                    </button>
-                </div>
-            )}
-            {successMessage && (
-                <div className="mb-4 p-4 bg-green-50 border border-green-200 text-green-700 rounded-xl">
-                    {successMessage}
-                </div>
-            )}
-
             {/* Header */}
             <motion.header
                 initial={{ y: -20, opacity: 0 }}
@@ -253,9 +272,10 @@ const Grades = () => {
                             whileHover={{ scale: 1.05 }}
                             whileTap={{ scale: 0.95 }}
                             onClick={handleImportExcel}
-                            className="flex items-center gap-2 px-4 py-2 bg-white border-2 border-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm"
+                            disabled={importing}
+                            className="flex items-center gap-2 px-4 py-2 bg-white border-2 border-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm disabled:opacity-60"
                         >
-                            <Upload size={16} /> رفع Excel
+                            <Upload size={16} /> {importing ? `جاري الرفع... ${progress.total ? `${progress.done}/${progress.total}` : ""}` : "رفع Excel"}
                         </motion.button>
                         <motion.button
                             whileHover={{ scale: 1.05 }}
@@ -268,6 +288,22 @@ const Grades = () => {
                     </div>
                 </div>
 
+                {importing && progress.total > 0 && (
+                    <div className="mt-4">
+                        <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                            <span>جاري رفع الصفوف...</span>
+                            <span>{progress.done} / {progress.total} ({Math.round((progress.done / progress.total) * 100)}%)</span>
+                        </div>
+                        <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-blue-600 transition-all duration-200"
+                                style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
+                            />
+                        </div>
+                    </div>
+                )}
+
+
                 {/* Stats */}
                 <motion.div
                     initial={{ y: 10, opacity: 0 }}
@@ -275,10 +311,30 @@ const Grades = () => {
                     className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3"
                 >
                     {[
-                        { label: 'إجمالي الصفوف', value: stats.total, icon: School, color: 'green' },
-                        { label: 'متوسط المصاريف', value: `${stats.avgPrice} ج`, icon: DollarSign, color: 'green' },
-                        { label: 'أعلى مصاريف', value: `${stats.maxPrice} ج`, icon: TrendingUp, color: 'amber' },
-                        { label: 'أقل مصاريف', value: `${stats.minPrice} ج`, icon: Award, color: 'amber' },
+                        {
+                            label: "إجمالي الصفوف",
+                            value: stats.total,
+                            icon: School,
+                            color: "green",
+                        },
+                        {
+                            label: "متوسط المصاريف",
+                            value: `${stats.avgPrice} ج`,
+                            icon: DollarSign,
+                            color: "green",
+                        },
+                        {
+                            label: "أعلى مصاريف",
+                            value: `${stats.maxPrice} ج`,
+                            icon: TrendingUp,
+                            color: "amber",
+                        },
+                        {
+                            label: "أقل مصاريف",
+                            value: `${stats.minPrice} ج`,
+                            icon: Award,
+                            color: "amber",
+                        },
                     ].map((stat, idx) => (
                         <motion.div
                             key={idx}
@@ -306,11 +362,14 @@ const Grades = () => {
                 animate="visible"
                 className="mb-6"
             >
-                <motion.div variants={itemVariants} className="bg-white rounded-2xl border border-gray-100 shadow-lg overflow-hidden hover:shadow-xl transition-all duration-300">
+                <motion.div
+                    variants={itemVariants}
+                    className="bg-white rounded-2xl border border-gray-100 shadow-lg overflow-hidden hover:shadow-xl transition-all duration-300"
+                >
                     <div className="bg-primary px-4 sm:px-6 py-4">
                         <h2 className="text-white font-bold text-lg flex items-center gap-2">
                             {isEditing ? <RotateCcw size={20} /> : <Plus size={20} />}
-                            {isEditing ? 'تعديل الصف' : 'إضافة صف جديد'}
+                            {isEditing ? "تعديل الصف" : "إضافة صف جديد"}
                         </h2>
                     </div>
 
@@ -339,7 +398,9 @@ const Grades = () => {
                                 <input
                                     type="number"
                                     value={grade.monthlyPrice}
-                                    onChange={(e) => setGrade({ ...grade, monthlyPrice: e.target.value })}
+                                    onChange={(e) =>
+                                        setGrade({ ...grade, monthlyPrice: e.target.value })
+                                    }
                                     placeholder="200"
                                     className="w-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 border-2 border-gray-200 rounded-xl py-3 px-4 transition-all duration-200 hover:border-blue-300"
                                     required
@@ -354,7 +415,7 @@ const Grades = () => {
                                     className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-primary text-white rounded-xl text-sm font-medium hover:bg-primary/90 shadow-lg shadow-primary/30 transition-all"
                                 >
                                     {isEditing ? <RotateCcw size={18} /> : <Plus size={18} />}
-                                    {isEditing ? 'تحديث' : 'إضافة'}
+                                    {isEditing ? "تحديث" : "إضافة"}
                                 </motion.button>
                                 {isEditing && (
                                     <motion.button
@@ -393,7 +454,13 @@ const Grades = () => {
                 </div>
 
                 <div className="max-h-[500px] overflow-x-auto overflow-y-auto custom-scrollbar">
-                    {grades && grades.length > 0 ? (
+                    {loading ? (
+                        <div className="p-6 space-y-3">
+                            {[0, 1, 2, 3, 4].map((i) => (
+                                <div key={i} className="h-12 rounded-xl bg-gray-100 animate-pulse" />
+                            ))}
+                        </div>
+                    ) : grades && grades.length > 0 ? (
                         <table className="w-full min-w-[500px]">
                             <thead className="bg-gradient-to-r from-gray-50 to-gray-100/50 sticky top-0 z-10">
                                 <tr>
@@ -408,7 +475,9 @@ const Grades = () => {
                                         </span>
                                     </th>
                                     <th className="text-right pl-6 py-4 w-[30%]">
-                                        <span className="text-gray-600 font-semibold text-sm">الإجراءات</span>
+                                        <span className="text-gray-600 font-semibold text-sm">
+                                            الإجراءات
+                                        </span>
                                     </th>
                                 </tr>
                             </thead>
@@ -421,11 +490,13 @@ const Grades = () => {
                                             initial="hidden"
                                             animate="visible"
                                             transition={{ delay: index * 0.05 }}
-                                            className={`hover:bg-blue-50/40 transition-all duration-200 group ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}
+                                            className={`hover:bg-blue-50/40 transition-all duration-200 group ${index % 2 === 0 ? "bg-white" : "bg-gray-50/30"}`}
                                         >
                                             <td className="text-right pr-6 py-4">
                                                 <span className="inline-flex items-center gap-2">
-                                                    <span className="font-medium text-gray-800">{item.name}</span>
+                                                    <span className="font-medium text-gray-800">
+                                                        {item.name}
+                                                    </span>
                                                 </span>
                                             </td>
                                             <td className="text-right py-4">
@@ -470,9 +541,8 @@ const Grades = () => {
                     )}
                 </div>
             </motion.div>
-
         </motion.section>
     );
-}
+};
 
 export default Grades;

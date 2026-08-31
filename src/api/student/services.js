@@ -6,6 +6,7 @@ import {
   httpPostFormData,
   httpPutFormData,
 } from "../http";
+import { downloadFile } from "../../utils/fileHandler";
 
 // Dashboard
 const getDashboard = async () => {
@@ -30,7 +31,7 @@ const updateProfileImage = async (formData) => {
 };
 
 const deleteProfileImage = async () => {
-  const response = await httpPut("/student/profile-image", null);
+  const response = await httpDelete("/student/profile-image");
   return response.data;
 };
 
@@ -58,7 +59,7 @@ const getMonthlyAttendance = async () => {
 };
 
 const getConsecutiveAbsences = async () => {
-  const response = await httpGet("/student/attendance/consecutive");
+  const response = await httpGet("/student/attendance/consecutive-absences");
   return response.data;
 };
 
@@ -107,18 +108,59 @@ const getOnlineExamById = async (attemptId) => {
   return response.data;
 };
 
+// Check active attempt
+const checkExamAttempt = async (examId) => {
+  const response = await httpGet(
+    `/student/exams/online/${examId}/check-attempt`,
+  );
+  return response.data;
+};
+
+// Resume exam
+const resumeExam = async (examId) => {
+  const response = await httpGet(`/student/exams/online/${examId}/resume`);
+  return response.data;
+};
+
+// Start exam
 const startExam = async (examId) => {
   const response = await httpPost(`/student/exams/online/${examId}/start`);
   return response.data;
 };
 
-const submitExam = async (attemptId, score) => {
-  const response = await httpPut(`/student/exams/online/${attemptId}/submit`, {
-    score,
-  });
+// Submit exam - no score
+const submitExam = async (attemptId) => {
+  const response = await httpPut(`/student/exams/online/${attemptId}/submit`);
   return response.data;
 };
 
+// Get exam questions with options
+const getExamQuestions = async (examId) => {
+  const response = await httpGet(`/student/exams/online/${examId}/questions`);
+  return response.data;
+};
+
+// Get single question with options
+const getQuestionById = async (questionId) => {
+  const response = await httpGet(
+    `/student/exams/online/question/${questionId}`,
+  );
+  return response.data;
+};
+
+// Download question file
+const downloadQuestionFile = async (questionId) => {
+  const url = `${import.meta.env.VITE_API_URL}/student/exams/online/question/${questionId}/download`;
+  return await downloadFile(url);
+};
+
+// Get options for question - without is_correct
+const getOptionsByQuestion = async (questionId) => {
+  const response = await httpGet(`/student/options/question/${questionId}`);
+  return response.data;
+};
+
+// Answer MCQ/True-False question - no is_correct
 const answerQuestion = async (examId, questionId, selectedOptionId) => {
   const response = await httpPost(`/student/exams/online/${examId}/answer`, {
     question_id: questionId,
@@ -127,6 +169,7 @@ const answerQuestion = async (examId, questionId, selectedOptionId) => {
   return response.data;
 };
 
+// Submit essay answer
 const submitEssayAnswer = async (examId, questionId, file) => {
   const formData = new FormData();
   formData.append("question_id", questionId);
@@ -153,10 +196,8 @@ const getAssignmentById = async (assignmentId) => {
 };
 
 const downloadAssignment = async (assignmentId) => {
-  const response = await httpGet(
-    `/student/assignments/${assignmentId}/download`,
-  );
-  return response;
+  const url = `${import.meta.env.VITE_API_URL}/student/assignments/${assignmentId}/download`;
+  return await downloadFile(url);
 };
 
 const submitAssignment = async (assignmentId, file) => {
@@ -185,6 +226,12 @@ const getSubmissions = async (month = "", page = 1) => {
   params.append("page", page);
   const response = await httpGet(`/student/submissions?${params.toString()}`);
   return response;
+};
+
+// Download own submission file
+const downloadSubmissionFile = async (assignmentId) => {
+  const url = `${import.meta.env.VITE_API_URL}/student/homeWorkSubmission/${assignmentId}/download`;
+  return await downloadFile(url);
 };
 
 // Videos & Playlists
@@ -216,41 +263,36 @@ const getCurrentSubscription = async () => {
   const response = await httpGet("/student/payments/current-subscription");
   return response.data;
 };
-// Exam Questions
-const getQuestionsByExam = async (examId) => {
-  const response = await httpGet(`/student/exams/online/${examId}/questions`);
+const getExamReview = async (attemptId) => {
+  const response = await httpGet(`/student/exams/online/${attemptId}/review`);
   return response.data;
 };
 
-const getOptionsByQuestion = async (questionId) => {
-  const response = await httpGet(`/student/options/question/${questionId}`);
-  return response.data;
-};
-
-const getQuestionById = async (questionId) => {
-  const response = await httpGet(`/student/exams/online/question/${questionId}`);
-  return response.data;
-};
 export {
   getDashboard,
   getProfile,
+  getExamReview,
   getQuickStats,
   updateProfileImage,
   deleteProfileImage,
   updatePassword,
   getAttendanceHistory,
   getMonthlyAttendance,
-  getOptionsByQuestion,
   getConsecutiveAbsences,
-  getQuestionById,
   getPaperExams,
   getPaperExamById,
   getExamResults,
   getAvailableExams,
   getExamHistory,
   getOnlineExamById,
+  checkExamAttempt,
+  resumeExam,
   startExam,
   submitExam,
+  getExamQuestions,
+  getQuestionById,
+  downloadQuestionFile,
+  getOptionsByQuestion,
   answerQuestion,
   submitEssayAnswer,
   getAssignments,
@@ -259,6 +301,7 @@ export {
   submitAssignment,
   updateAssignmentSubmission,
   getSubmissions,
+  downloadSubmissionFile,
   getPlaylists,
   getPlaylistVideos,
   getPaymentHistory,

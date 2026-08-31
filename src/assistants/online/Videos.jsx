@@ -1,3 +1,4 @@
+import { notifyError, notifySuccess, notifyInfo, confirmToast } from "../../lib/notify";
 import {
   Plus,
   X,
@@ -35,7 +36,12 @@ const Videos = () => {
   const [playlists, setPlaylists] = useState([]);
   const [grades, setGrades] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState(null);
+  /* كل الرسائل toast */
+  const setMessage = (msg) => {
+    if (!msg?.text) return;
+    if (msg.type === "success") notifySuccess(msg.text);
+    else notifyError(msg.text);
+  };
 
   const [activeTab, setActiveTab] = useState("videos");
   const [showVideoModal, setShowVideoModal] = useState(false);
@@ -179,7 +185,7 @@ const Videos = () => {
 
     let result;
     if (editingPlaylist) {
-      result = await updatePlaylistInfo(editingPlaylist.id, formData);
+      result = await updatePlaylistInfo(editingplaylist.playlist_id, formData);
     } else {
       result = await createNewPlaylist(formData);
     }
@@ -203,7 +209,7 @@ const Videos = () => {
   const openPlaylist = async (playlist) => {
     setSelectedPlaylist(playlist);
     setActiveTab("playlistVideos");
-    const result = await fetchPlaylistVideos(playlist.id);
+    const result = await fetchPlaylistVideos(playlist.playlist_id);
     if (result.success) setSelectedPlaylistVideos(result.data);
   };
 
@@ -232,7 +238,7 @@ const Videos = () => {
   };
 
   const handleDeleteVideo = async (videoId) => {
-    if (confirm("حذف هذا الفيديو؟")) {
+    confirmToast("حذف هذا الفيديو؟", async () => {
       const result = await removeVideo(videoId);
       if (result.success) {
         setMessage({ type: "success", text: "تم حذف الفيديو بنجاح" });
@@ -240,11 +246,11 @@ const Videos = () => {
       } else {
         setMessage({ type: "error", text: result.error });
       }
-    }
+    });
   };
 
   const handleDeletePlaylist = async (playlistId) => {
-    if (confirm("حذف هذه القائمة؟")) {
+    confirmToast("حذف هذه القائمة؟", async () => {
       const result = await removePlaylist(playlistId);
       if (result.success) {
         setMessage({ type: "success", text: "تم حذف القائمة بنجاح" });
@@ -252,11 +258,11 @@ const Videos = () => {
       } else {
         setMessage({ type: "error", text: result.error });
       }
-    }
+    });
   };
 
   const handleRemoveVideoFromPlaylist = async (playlistVideoId) => {
-    if (confirm("إزالة الفيديو من القائمة؟")) {
+    confirmToast("إزالة الفيديو من القائمة؟", async () => {
       const result = await removeVideoFromPlaylistAction(playlistVideoId);
       if (result.success) {
         setMessage({ type: "success", text: "تم إزالة الفيديو من القائمة" });
@@ -264,7 +270,7 @@ const Videos = () => {
       } else {
         setMessage({ type: "error", text: result.error });
       }
-    }
+    });
   };
 
   const openWatch = (video) => {
@@ -319,13 +325,6 @@ const Videos = () => {
         </div>
       </motion.header>
 
-      {message && (
-        <div
-          className={`w-full p-3 rounded-lg text-sm font-bold ${message.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}
-        >
-          {message.text}
-        </div>
-      )}
 
       <div className="flex flex-col sm:flex-row gap-2">
         <div className="flex-1 flex items-center gap-2 bg-white rounded-lg border border-gray-200 px-3 py-2">
@@ -412,7 +411,7 @@ const Videos = () => {
           ) : (
             filteredPlaylists.map((playlist) => (
               <PlaylistCard
-                key={playlist.id}
+                key={playlist.playlist_id}
                 playlist={playlist}
                 onClick={() => openPlaylist(playlist)}
                 onEdit={() => handleEditPlaylist(playlist)}
@@ -531,7 +530,7 @@ const Videos = () => {
                       )
                     : playlists
                   ).map((pl) => (
-                    <option key={pl.id} value={pl.id}>
+                    <option key={pl.playlist_id} value={pl.playlist_id}>
                       {pl.title}
                     </option>
                   ))}

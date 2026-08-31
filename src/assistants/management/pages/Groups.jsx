@@ -1,29 +1,39 @@
 import { Download, Edit, FileText, Plus, RotateCcw, Trash, Upload, Calendar, Clock, Users, School, MapPin } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useApiList, useApiMutation } from "../../../hooks/useApiQuery";
+import { qk } from "../../../api/queryKeys";
+import { notifyError, notifySuccess, confirmToast, toast } from "../../../lib/notify";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-    fetchAllGroups, 
-    createNewGroup, 
-    updateGroupInfo, 
+import { downloadExcelTemplate, pickExcelFile, exportPdfTable } from "../../../utils/office.js"
+import { ARABIC_DAYS, formatTime } from "../../../utils/helpers.js"
+import {
+    fetchAllGroups,
+    createNewGroup,
+    updateGroupInfo,
     removeGroup,
     fetchAllGrades,
     fetchGroupsByGrade
 } from "../../../api/assistant/actions";
 
-const ARABIC_DAYS = ["السبت", "الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة"];
-
-function formatTime(t) {
-    if (!t) return "";
-    return t.slice(0, 5);
-}
 
 const Groups = () => {
-    const [grades, setGrades] = useState([]);
-    const [groups, setGroups] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [successMessage, setSuccessMessage] = useState(null);
     const [isEditing, setIsEditing] = useState(false);
+    const [importing, setImporting] = useState(false);
+    const [progress, setProgress] = useState({ done: 0, total: 0 });
+
+
+    /* fetch مرة واحدة + كاش مشترك */
+    const groupsQuery = useApiList(qk.groups.all, fetchAllGroups, {
+        select: (data) => (Array.isArray(data) ? data : []).filter((item) => item?.deleted === 0 || item?.deleted === undefined),
+        errorMessage: "حدث خطأ في تحميل المجموعات",
+    });
+    const gradesQuery = useApiList(qk.grades.all, fetchAllGrades, {
+        select: (data) => (Array.isArray(data) ? data : []).filter((item) => item?.name && item.name.trim() !== "" && (item.deleted === 0 || item.deleted === undefined)),
+        showErrorToast: false,
+    });
+    const groups = groupsQuery.data ?? [];
+    const grades = gradesQuery.data ?? [];
+    const loading = groupsQuery.isLoading;
 
     const emptyGroup = {
         id: "",
@@ -44,7 +54,7 @@ const Groups = () => {
             }
             return sum;
         }, 0);
-        
+
         const uniqueGrades = new Set(groupsData.map(g => g.grade_id));
         const uniqueRooms = new Set(groupsData.map(g => g.room).filter(Boolean));
 
@@ -58,129 +68,47 @@ const Groups = () => {
 
     const stats = calculateStats(groups);
 
-    async function loadData() {
-        setLoading(true);
-        setError(null);
-        try {
-            const [groupsResult, gradesResult] = await Promise.all([
-                fetchAllGroups(),
-                fetchAllGrades()
-            ]);
+    const saveMutation = useApiMutation(
+        ({ id, payload }) => (id ? updateGroupInfo(id, payload) : createNewGroup(payload)),
+        {
+            invalidateKeys: [qk.groups.all, qk.assistant.dashboard],
+            errorMessage: "حدث خطأ في حفظ البيانات",
+            onSuccess: (_d, variables) => {
+                notifySuccess(variables.id ? "تم تحديث المجموعة بنجاح" : "تم إضافة المجموعة بنجاح");
+                resetForm();
+            },
+        },
+    );
 
-            if (groupsResult.success) {
-                const data = Array.isArray(groupsResult.data) ? groupsResult.data : [];
-                const activeGroups = data.filter(item => item.deleted === 0 || item.deleted === undefined);
-                setGroups(activeGroups);
-            } else {
-                setError(groupsResult.error || "حدث خطأ في تحميل المجموعات");
-                setGroups([]);
-            }
+    const deleteMutation = useApiMutation((id) => removeGroup(id), {
+        invalidateKeys: [qk.groups.all, qk.assistant.dashboard],
+        successMessage: "تم حذف المجموعة بنجاح",
+        errorMessage: "حدث خطأ في حذف المجموعة",
+    });
 
-            if (gradesResult.success) {
-                const data = Array.isArray(gradesResult.data) ? gradesResult.data : [];
-                const activeGrades = data.filter(item => item.name && item.name.trim() !== "" && (item.deleted === 0 || item.deleted === undefined));
-                setGrades(activeGrades);
-            }
-        } catch (error) {
-            console.error("Error loading data:", error);
-            setError("حدث خطأ في تحميل البيانات");
-            setGroups([]);
-        } finally {
-            setLoading(false);
-        }
-    }
+    function saveGroup() {
+        if (!group.name || group.name.trim() === "") return notifyError("يرجى إدخال اسم المجموعة");
+        if (!group.grade_id) return notifyError("يرجى اختيار المرحلة الدراسية");
+        if (!group.days || group.days.trim() === "") return notifyError("يرجى اختيار أيام الدراسة");
+        if (!group.start_time) return notifyError("يرجى تحديد وقت البداية");
+        if (!group.end_time) return notifyError("يرجى تحديد وقت النهاية");
 
-    useEffect(() => {
-        loadData();
-    }, []);
-
-    async function saveGroup() {
-        setError(null);
-        setSuccessMessage(null);
-
-        if (!group.name || group.name.trim() === "") {
-            setError("يرجى إدخال اسم المجموعة");
-            return;
-        }
-
-        if (!group.grade_id) {
-            setError("يرجى اختيار المرحلة الدراسية");
-            return;
-        }
-
-        if (!group.days || group.days.trim() === "") {
-            setError("يرجى اختيار أيام الدراسة");
-            return;
-        }
-
-        if (!group.start_time) {
-            setError("يرجى تحديد وقت البداية");
-            return;
-        }
-
-        if (!group.end_time) {
-            setError("يرجى تحديد وقت النهاية");
-            return;
-        }
-
-        try {
-            const groupData = {
+        saveMutation.mutate({
+            id: isEditing && group.id ? group.id : null,
+            payload: {
                 name: group.name.trim(),
                 grade_id: Number(group.grade_id),
                 days: group.days,
                 start_time: group.start_time,
                 end_time: group.end_time,
                 room: group.room || "",
-            };
-
-            let result;
-            if (isEditing && group.id) {
-                result = await updateGroupInfo(group.id, groupData);
-                if (result.success) {
-                    setSuccessMessage("تم تحديث المجموعة بنجاح");
-                    await loadData();
-                }
-            } else {
-                result = await createNewGroup(groupData);
-                if (result.success) {
-                    setSuccessMessage("تم إضافة المجموعة بنجاح");
-                    await loadData();
-                }
-            }
-
-            if (!result?.success) {
-                setError(result?.error || "حدث خطأ في حفظ البيانات");
-            }
-        } catch (error) {
-            console.error("Error saving group:", error);
-            setError(error.message || "حدث خطأ في حفظ البيانات");
-        }
-
-        resetForm();
-        setTimeout(() => setSuccessMessage(null), 3000);
+            },
+        });
     }
 
-    async function removeGroupById(id) {
+    function removeGroupById(id) {
         if (!id) return;
-        
-        if (!confirm("هل أنت متأكد من حذف هذه المجموعة؟")) return;
-        
-        setError(null);
-        setSuccessMessage(null);
-        
-        try {
-            const result = await removeGroup(id);
-            if (result.success) {
-                setSuccessMessage("تم حذف المجموعة بنجاح");
-                await loadData();
-                setTimeout(() => setSuccessMessage(null), 3000);
-            } else {
-                setError(result.error || "حدث خطأ في حذف المجموعة");
-            }
-        } catch (error) {
-            console.error("Error deleting group:", error);
-            setError("حدث خطأ في حذف المجموعة");
-        }
+        confirmToast("هل أنت متأكد من حذف هذه المجموعة؟", () => deleteMutation.mutate(id), "حذف");
     }
 
     function editGroup(groupData) {
@@ -203,14 +131,14 @@ const Groups = () => {
 
     function toggleDay(day) {
         const currentDays = group.days ? group.days.split(',').map(d => d.trim()).filter(d => d) : [];
-        
+
         let newDays;
         if (currentDays.includes(day)) {
             newDays = currentDays.filter(d => d !== day);
         } else {
             newDays = [...currentDays, day];
         }
-        
+
         setGroup({
             ...group,
             days: newDays.join(', ')
@@ -223,9 +151,133 @@ const Groups = () => {
         return daysList.includes(day);
     }
 
-    const handleDownloadTemplate = () => {};
-    const handleImportExcel = () => {};
-    const handleExportPdf = () => {};
+    const handleDownloadTemplate = () => {
+        const headers = ['المرحلة', 'اسم المجموعة', 'القاعة', 'الأيام', 'وقت البداية', 'وقت النهاية'];
+        const sampleRow = ['الصف الاول الثانوي', 'المجموعة أ', 'قاعة 101', 'السبت,الأحد', '08:00', '10:00'];
+        downloadExcelTemplate('قالب_المجموعات.xlsx', headers, sampleRow);
+    };
+    const handleImportExcel = async () => {
+        try {
+            const rows = await pickExcelFile();
+            if (!rows) return;
+            if (!rows.length) return notifyError("الملف فارغ");
+
+            setImporting(true);
+
+            const norm = (v) => String(v ?? "").trim();
+            const normTime = (v) => {
+                const t = norm(v);
+                if (!t) return "";
+                const m = t.match(/^(\d{1,2}):(\d{2})/);
+                if (!m) return "";
+                return `${String(m[1]).padStart(2, "0")}:${m[2]}`;
+            };
+
+            let ok = 0;
+            let skipped = 0;
+            const errors = [];
+            const seen = new Set();
+            const existing = new Set(
+                (groups || []).map((g) => `${norm(g.name)}__${String(g.grade_id ?? g.grade?.id ?? "")}`)
+            );
+
+            setProgress({ done: 0, total: rows.length });
+
+            for (let i = 0; i < rows.length; i++) {
+                const r = rows[i];
+                const line = i + 2;
+                setProgress({ done: i, total: rows.length });
+
+                const name = norm(r["اسم المجموعة"]);
+                const gradeName = norm(r["المرحلة"]);
+                const room = norm(r["القاعة"]);
+                const days = norm(r["الأيام"]).split(/[,،]/).map((d) => d.trim()).filter(Boolean).join(", ");
+                const start_time = normTime(r["وقت البداية"]);
+                const end_time = normTime(r["وقت النهاية"]);
+
+                if (!name) { errors.push(`صف ${line}: اسم المجموعة ناقص`); continue; }
+
+                const gradeRow = grades.find((g) => norm(g.name) === gradeName);
+                if (!gradeRow) { errors.push(`صف ${line}: المرحلة "${gradeName}" غير موجودة`); continue; }
+                if (!days) { errors.push(`صف ${line}: أيام الدراسة ناقصة`); continue; }
+                if (!start_time || !end_time) { errors.push(`صف ${line}: وقت البداية أو النهاية غير صحيح`); continue; }
+
+                const key = `${name}__${String(gradeRow.id)}`;
+                if (existing.has(key) || seen.has(key)) {
+                    skipped++;
+                    errors.push(`صف ${line}: المجموعة "${name}" موجودة بالفعل في نفس المرحلة — تم تخطيها`);
+                    continue;
+                }
+                seen.add(key);
+
+                try {
+                    const res = await createNewGroup({
+                        name,
+                        grade_id: Number(gradeRow.id),
+                        days,
+                        start_time,
+                        end_time,
+                        room,
+                    });
+                    if (res?.success === false) errors.push(`صف ${line}: ${res?.message || "فشل الحفظ"}`);
+                    else { ok++; existing.add(key); }
+                } catch (e) {
+                    errors.push(`صف ${line}: ${e?.message || "فشل الحفظ"}`);
+                }
+            }
+
+            setProgress({ done: rows.length, total: rows.length });
+
+
+            await groupsQuery.refetch();
+
+            if (ok) notifySuccess(`تم إضافة ${ok} مجموعة بنجاح`);
+            if (skipped) notifyError(`تم تخطي ${skipped} مجموعة مكررة`);
+            if (errors.length) {
+                notifyError(`فشل ${errors.length} صف`);
+                console.warn("Excel import errors:", errors);
+            }
+        } catch (e) {
+            notifyError(e?.message || "حدث خطأ أثناء رفع الملف");
+        } finally {
+            setImporting(false);
+            setProgress({ done: 0, total: 0 });
+        }
+
+    };
+    const handleExportPdf = () => {
+        if (!groups.length) {
+            toast.error('لا يوجد مجموعات لتصديرها');
+            return;
+        }
+
+        const columns = [
+            { header: 'المجموعة', key: 'name' },
+            { header: 'المرحلة', key: 'gradeName' },
+            { header: 'القاعة', key: 'room' },
+            { header: 'الأيام', key: 'days' },
+            { header: 'التوقيت', key: 'start_time' },
+        ];
+
+        const pdfRows = groups.map(g => {
+            const grade = grades.find(grade => grade.id === g.grade_id);
+            const gradeName = grade ? grade.name : '-';
+
+            return {
+                name: g.name,
+                gradeName: gradeName,
+                room: g.room || '-',
+                days: g.days,
+                start_time: formatTime(g.start_time)
+            };
+        });
+
+        const today = new Date();
+        const dateStr = today.toISOString().split('T')[0];
+        const fileName = `كشف_المجموعات_${dateStr}.pdf`;
+
+        exportPdfTable(fileName, 'كشف المجموعات الدراسية', columns, pdfRows);
+    };
 
     const containerVariants = {
         hidden: { opacity: 0 },
@@ -242,17 +294,6 @@ const Groups = () => {
         visible: { opacity: 1, x: 0, transition: { type: "spring", stiffness: 100, damping: 15 } }
     };
 
-    if (loading) {
-        return (
-            <div className="flex items-center justify-center min-h-screen">
-                <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-                    <p className="mt-4 text-gray-500">جاري تحميل المجموعات...</p>
-                </div>
-            </div>
-        );
-    }
-
     return (
         <motion.section
             initial={{ opacity: 0 }}
@@ -260,23 +301,6 @@ const Groups = () => {
             transition={{ duration: 0.5 }}
             className="min-h-screen"
         >
-            {error && (
-                <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl flex items-center justify-between">
-                    <span>{error}</span>
-                    <button 
-                        onClick={() => setError(null)} 
-                        className="text-red-500 hover:text-red-700"
-                    >
-                        ✕
-                    </button>
-                </div>
-            )}
-            {successMessage && (
-                <div className="mb-4 p-4 bg-green-50 border border-green-200 text-green-700 rounded-xl">
-                    {successMessage}
-                </div>
-            )}
-
             {/* Header */}
             <motion.header
                 initial={{ y: -20, opacity: 0 }}
@@ -314,9 +338,10 @@ const Groups = () => {
                             whileHover={{ scale: 1.05 }}
                             whileTap={{ scale: 0.95 }}
                             onClick={handleImportExcel}
-                            className="flex items-center gap-2 px-4 py-2 bg-white border-2 border-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm"
+                            disabled={importing}
+                            className="flex items-center gap-2 px-4 py-2 bg-white border-2 border-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm disabled:opacity-60"
                         >
-                            <Upload size={16} /> رفع Excel
+                            <Upload size={16} /> {importing ? `جاري الرفع... ${progress.total ? `${progress.done}/${progress.total}` : ""}` : "رفع Excel"}
                         </motion.button>
                         <motion.button
                             whileHover={{ scale: 1.05 }}
@@ -328,6 +353,22 @@ const Groups = () => {
                         </motion.button>
                     </div>
                 </div>
+
+                {importing && progress.total > 0 && (
+                    <div className="mt-4">
+                        <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                            <span>جاري رفع المجموعات...</span>
+                            <span>{progress.done} / {progress.total} ({Math.round((progress.done / progress.total) * 100)}%)</span>
+                        </div>
+                        <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-blue-600 transition-all duration-200"
+                                style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
+                            />
+                        </div>
+                    </div>
+                )}
+
 
                 {/* Stats */}
                 <motion.div
@@ -447,8 +488,8 @@ const Groups = () => {
                                             whileTap={{ scale: 0.95 }}
                                             onClick={() => toggleDay(day)}
                                             className={`px-4 py-2 rounded-xl text-sm font-medium border-2 transition-all ${active
-                                                    ? 'bg-primary text-white border-primary shadow-md shadow-primary/30'
-                                                    : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-blue-300'
+                                                ? 'bg-primary text-white border-primary shadow-md shadow-primary/30'
+                                                : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-blue-300'
                                                 }`}
                                         >
                                             {day}
@@ -528,7 +569,13 @@ const Groups = () => {
                 </div>
 
                 <div className="max-h-[500px] overflow-x-auto overflow-y-auto custom-scrollbar">
-                    {groups.length > 0 ? (
+                    {loading ? (
+                        <div className="p-6 space-y-3">
+                            {[0, 1, 2, 3, 4].map((i) => (
+                                <div key={i} className="h-12 rounded-xl bg-gray-100 animate-pulse" />
+                            ))}
+                        </div>
+                    ) : groups.length > 0 ? (
                         <table className="w-full min-w-[900px]">
                             <thead className="bg-gradient-to-r from-gray-50 to-gray-100/50 sticky top-0 z-10">
                                 <tr>
@@ -568,10 +615,9 @@ const Groups = () => {
                             <tbody className="divide-y divide-gray-100">
                                 <AnimatePresence>
                                     {groups.map((item, index) => {
-                                        // الحصول على اسم المرحلة من قائمة الصفوف
                                         const grade = grades.find(g => g.id === item.grade_id);
                                         const gradeName = grade ? grade.name : "-";
-                                        
+
                                         return (
                                             <motion.tr
                                                 key={item.id || index}

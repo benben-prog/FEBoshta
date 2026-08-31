@@ -1,10 +1,11 @@
-import { getCookie } from "./cookies";
+import { getCookie, setCookie } from "./cookies";
 
 const getUser = () => {
   const userData = getCookie("user_data");
   if (!userData) return null;
   try {
-    return JSON.parse(userData);
+    const user = JSON.parse(userData);
+    return user;
   } catch {
     return null;
   }
@@ -20,5 +21,13 @@ const getUserPermissions = () => {
   return user?.permissions || null;
 };
 
-export { getUser, getUserRole, getUserPermissions };
+const updateUserCookie = (userData) => {
+  const currentUser = getUser();
+  if (currentUser) {
+    const updatedUser = { ...currentUser, ...userData };
+    setCookie("user_data", JSON.stringify(updatedUser), 7);
+  }
+};
+
+export { getUser, getUserRole, getUserPermissions, updateUserCookie };
 export default getUser;

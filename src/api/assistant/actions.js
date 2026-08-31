@@ -1,5 +1,15 @@
 // src/api/assistant/actions.js
 import * as assistantServices from "./services";
+import config from "../../config";
+import { previewFile, downloadFile } from "../../utils/fileHandler";
+const { apiUrl } = config;
+
+
+const previewVideoFileAction = async (videoId) => {
+  const url = `${apiUrl}/assistant/videos/${videoId}/preview`;
+  return await previewFile(url);
+};
+
 
 const fetchAssistantProfile = async () => {
   try {
@@ -1233,6 +1243,51 @@ const downloadQuestionFileAction = async (questionId) => {
   }
 };
 
+const previewQuestionFileAction = async (questionId) => {
+  const url = `${apiUrl}/assistant/questions/${questionId}/download`;
+  return await previewFile(url);
+};
+
+const previewAnswerFileAction = async (answerId) => {
+  const url = `${apiUrl}/assistant/student-answers/${answerId}/preview`;
+  return await previewFile(url);
+};
+
+const downloadAnswerFileDirect = async (answerId, fileName = "answer-file") => {
+  const url = `${apiUrl}/assistant/student-answers/${answerId}/download`;
+  return await downloadFile(url, fileName);
+};
+
+const downloadQuestionFileDirect = async (questionId, fileName = "question-file") => {
+  const url = `${apiUrl}/assistant/questions/${questionId}/download`;
+  return await downloadFile(url, fileName);
+};
+
+const createNewQuestionWithFile = async (questionData, file) => {
+  try {
+    const data = await assistantServices.createQuestionWithFile(
+      questionData,
+      file,
+    );
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+const updateQuestionInfoWithFile = async (questionId, questionData, file) => {
+  try {
+    const data = await assistantServices.updateQuestionWithFile(
+      questionId,
+      questionData,
+      file,
+    );
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
 const createNewQuestion = async (questionData) => {
   try {
     const data = await assistantServices.createQuestion(questionData);
@@ -1946,7 +2001,13 @@ export {
   fetchQuestionById,
   downloadQuestionFileAction,
   createNewQuestion,
+  createNewQuestionWithFile,
   updateQuestionInfo,
+  updateQuestionInfoWithFile,
+  previewQuestionFileAction,
+  downloadQuestionFileDirect,
+  previewAnswerFileAction,
+  downloadAnswerFileDirect,
   removeQuestion,
   fetchOptionsByQuestion,
   fetchOptionById,
@@ -2000,4 +2061,5 @@ export {
   createNewWhatsappTemplate,
   updateWhatsappTemplateInfo,
   toggleWhatsappTemplateAction,
+  previewVideoFileAction,
 };

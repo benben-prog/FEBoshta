@@ -1,3 +1,4 @@
+import { notifyError } from "../lib/notify";
 import {
   ArrowRight,
   Youtube,
@@ -9,9 +10,11 @@ import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { pageVariants, itemVariants } from "../motion";
 import config from "../config";
+import { previewVideoFileAction } from "../api/assistant/actions.js";
 
 const VideoPlayer = ({ video, onBack, relatedVideos = [], onRelatedClick }) => {
   const [downloadLoading, setDownloadLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(null);
 
   const getYouTubeId = (url) => {
     if (!url) return null;
@@ -33,7 +36,7 @@ const VideoPlayer = ({ video, onBack, relatedVideos = [], onRelatedClick }) => {
   const getThumbnailUrl = (thumbnailPath) => {
     if (!thumbnailPath) return null;
     if (thumbnailPath.startsWith("http")) return thumbnailPath;
-    return `${config.apiUrl}/${thumbnailPath}`;
+    return `https://backend.benb3n.cloud/${thumbnailPath}`;
   };
 
   const handleDownloadFile = async () => {
@@ -72,23 +75,39 @@ const VideoPlayer = ({ video, onBack, relatedVideos = [], onRelatedClick }) => {
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error("Download error:", error);
-      alert("فشل تحميل الملف");
+      notifyError("فشل تحميل الملف");
     } finally {
       setDownloadLoading(false);
     }
   };
+
+  const getVideoId = (video) => {
+    return video.video_id || video.id;
+  };
+
+  const handlePreview = async (video) => {
+    const actualVideoId = getVideoId(video);
+    setActionLoading(`${actualVideoId}-preview`);
+    const result = await previewVideoFileAction(actualVideoId);
+    setActionLoading(null);
+    if (!result.success) {
+      alert(result.error || "فشل المعاينة");
+    }
+  };
+
+
 
   return (
     <motion.div
       variants={pageVariants}
       initial="hidden"
       animate="show"
-      className="min-h-screen bg-white"
+      className="min-h-screen"
       dir="rtl"
     >
       <motion.div
         variants={itemVariants}
-        className="sticky top-0 bg-white border-b border-gray-200 z-10 px-3 py-2.5 flex items-center gap-2"
+        className="sticky top-0 border-gray-200 z-10 px-3 py-2.5 flex items-center gap-2"
       >
         <button
           onClick={onBack}
@@ -161,7 +180,8 @@ const VideoPlayer = ({ video, onBack, relatedVideos = [], onRelatedClick }) => {
                       <p className="text-xs text-gray-500">PDF / Word / صورة</p>
                     </div>
                   </div>
-                  <button
+                  <div className="flex flex-col lg:flex-row gap-1 items-center">
+                    <button
                     onClick={handleDownloadFile}
                     disabled={downloadLoading}
                     className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-xs sm:text-sm font-bold hover:bg-blue-700 transition disabled:opacity-60"
@@ -169,6 +189,15 @@ const VideoPlayer = ({ video, onBack, relatedVideos = [], onRelatedClick }) => {
                     <Download size={14} />
                     {downloadLoading ? "جاري التحميل..." : "تحميل الملف"}
                   </button>
+
+                  <button
+                    onClick={() => handlePreview(video)}
+                    disabled={actionLoading === `${video.id}-preview`}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-xs sm:text-sm font-bold hover:bg-blue-700 transition disabled:opacity-60"
+                  >
+                    عرض الملف
+                  </button>
+                  </div>
                 </div>
               )}
             </div>

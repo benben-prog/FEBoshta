@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { GraduationCap, Menu, X, LogOut, ChevronDown } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { logout } from "../api/auth/actions";
-import { getUserPermissions } from "../utils/getUser";
+import { getUserPermissions, getUserRole } from "../utils/getUser";
 import MrBoshta from "../assets/Mr-Boshta-removebg.png";
 import {
   LayoutDashboard,
@@ -39,6 +39,7 @@ const studentNavItems = [
   { title: "المحاضرات", icon: BookOpen, path: "/student/courses" },
   { title: "الدرجات", icon: BarChart3, path: "/student/degrees" },
   { title: "الامتحانات", icon: FileCheck2, path: "/student/exams" },
+  { title: "الواجبات", icon: ClipboardList, path: "/student/homework" },
   { title: "الملف الشخصي", icon: User, path: "/student/profile" },
 ];
 
@@ -233,33 +234,31 @@ const Sidebar = () => {
   const toggleGroup = (title) =>
     setOpenGroups((prev) => ({ ...prev, [title]: !prev[title] }));
 
-  const getRole = () => {
+  const role = getUserRole() || getRoleFromPath();
+
+  function getRoleFromPath() {
     if (location.pathname.startsWith("/student")) return "student";
     if (location.pathname.startsWith("/teacher")) return "teacher";
     if (location.pathname.startsWith("/assistant")) return "assistant";
     return "student";
-  };
+  }
 
   const getNavItems = () => {
-    const role = getRole();
     const permissions = getUserPermissions();
 
     if (role === "student") return studentNavItems;
     if (role === "teacher") return teacherNavItems;
 
-    // Assistant
     if (role === "assistant") {
       if (permissions === "center_management") {
         return assistantCenterNavItems;
       }
-      // online_management أو أي حاجة تانية
       return assistantOnlineNavItems;
     }
 
     return studentNavItems;
   };
 
-  const role = getRole();
   const navItems = getNavItems();
 
   const handleLogout = () => {
@@ -270,7 +269,7 @@ const Sidebar = () => {
   return (
     <>
       {/* Mobile Header */}
-      <div className="lg:hidden fixed top-0 right-0 left-0 z-40 flex items-center justify-between bg-gradient-to-l from-[#003322] to-[#009966] px-4 py-1 shadow-sm">
+      <div className="lg:hidden fixed top-0 right-0 left-0 z-40 flex items-center justify-between bg-linear-to-l from-[#003322] to-[#009966] px-4 py-1 shadow-sm">
         <div className="flex items-center justify-center gap-2 text-white">
           <span className="text-lg font-bold font-mekalbaz">أ / محمد بشتة</span>
           <img className="w-20 h-20" src={MrBoshta} alt="Mr Boshta" />
@@ -294,17 +293,17 @@ const Sidebar = () => {
         />
       )}
 
-      {/* Sidebar */}
       <aside
         className={`fixed lg:sticky top-0 right-0 z-50 h-screen w-60 shrink-0 flex flex-col border-l border-sidebar-border bg-[#0f3d0f] p-6 transition-transform duration-300 ${
           open ? "translate-x-0" : "translate-x-full lg:translate-x-0"
         }`}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between text-white lg:justify-start lg:gap-2">
+        <div className="flex items-center justify-between text-white lg:justify-start lg:gap-2 shrink-0">
           <div className="flex flex-col items-center justify-center">
             <span className="text-xl font-mekalbaz">أ / محمد بشتة</span>
-            <span className="text-xs text-gray-400">{roleNames[role]}</span>
+            <span className="text-xs text-gray-400">
+              {roleNames[role] || "الطالب"}
+            </span>
           </div>
           <img className="w-20 h-20" src={MrBoshta} alt="Mr Boshta" />
           <button
@@ -317,8 +316,7 @@ const Sidebar = () => {
           </button>
         </div>
 
-        {/* Nav Items */}
-        <div className="mt-8 flex flex-col gap-3 z-10 flex-1 overflow-y-auto">
+        <div className="mt-8 flex flex-col gap-3 z-10 flex-1 overflow-y-auto min-h-0 custom-scrollbar">
           {navItems.map((item) => {
             const Icon = item.icon;
 
@@ -432,10 +430,9 @@ const Sidebar = () => {
           })}
         </div>
 
-        {/* Logout */}
         <button
           onClick={handleLogout}
-          className="flex items-center justify-between rounded-2xl px-5 py-4 text-gray-300 hover:bg-red-500/20 hover:text-red-400 transition-all z-10"
+          className="shrink-0 flex items-center justify-between rounded-2xl px-5 py-4 text-gray-300 hover:bg-red-500/20 hover:text-red-400 transition-all z-10 mt-2 border-t border-white/10 pt-4"
         >
           <span className="text-lg font-bold">تسجيل الخروج</span>
           <LogOut size={22} />
